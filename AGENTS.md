@@ -43,7 +43,7 @@
 * **完全动态与按需更新原则**：
   - `baw`（`@binance/agentic-wallet`）处于高频迭代期，**禁止在文档或逻辑中硬编码任何特定版本号**，以防后续会话因静态版本信息产生误判。
   - CLI 工具已注册至系统 `PATH`，全局各终端均可直接执行 `baw` 命令。
-  - **为何采用全局安装（`-g`）而非本地 `node_modules`**：本项目底层 20 个 Skill（如 `binance-wallet-tracker`、`binance-leaderboard` 等）在其规范中均以系统级 CLI 命令 `baw <command>` 直接调用。全局安装避免了在项目根目录引入冗余的 `package.json` 与繁琐的 `npx` / 相对路径前缀，确保所有 Skill、脚本与多 Agent 协同无缝原生执行。
+  - **为何采用全局安装（`-g`）而非本地 `node_modules`**：本项目底层各官方 Skill（如 `binance-wallet-tracker`、`binance-leaderboard` 等）在其规范中均以系统级 CLI 命令 `baw <command>` 直接调用。全局安装避免了在项目根目录引入冗余的 `package.json` 与繁琐的 `npx` / 相对路径前缀，确保所有 Skill、脚本与多 Agent 协同无缝原生执行。
 * **动态检查与按需升级**：
   - Agent 在执行涉及钱包或相关 Skill 的任务时，应以各 Skill 的 `requiredCliVersion` 声明或 npm 远端最新版为准动态适配。
   - 若提示版本不匹配或遇到新接口需求，执行动态检查与升级：
@@ -77,18 +77,18 @@
 
 ---
 
-## 三、项目技能体系（20 个 Skill 全景清单）
+## 三、项目技能体系（官方 Skill 全景清单）
 
 所有 Skill 统一存放于项目工作区目录 [`.agents/skills/`](./.agents/skills/) 下，完全与全局配置隔离。
 
-### 1. Web3 链上钱包与资金流（3 个）
+### 1. Web3 链上钱包与资金流
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
 | [`binance-agentic-wallet`](./.agents/skills/binance-agentic-wallet) | Web3 钱包连接、代币转账、DEX 交易、签名、DeFi 质押、预测市场 | `baw <command> --json` |
 | [`onchain-pay`](./.agents/skills/onchain-pay) | 法币买币并直接提至链上钱包（一键购币直达） | `sign_and_call.sh` |
 | [`payment`](./.agents/skills/payment) | Binance Pay 扫码与链接收付款（C2C / PIX） | `python payment_skill.py` |
 
-### 2. 市场热度、代币筛选与情报发现（6 个）
+### 2. 市场热度、代币筛选与情报发现
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
 | [`crypto-market-rank`](./.agents/skills/crypto-market-rank) | 社交热度榜、代币热搜/涨幅榜、聪明钱净流入榜、Meme 发射台打新榜、交易员盈亏榜 | `node .agents/skills/crypto-market-rank/scripts/cli.mjs <cmd>` |
@@ -98,27 +98,27 @@
 | [`trading-signal`](./.agents/skills/trading-signal) | 单笔链上聪明钱买卖信号、跟单收益率分析 | `node .agents/skills/trading-signal/scripts/cli.mjs <cmd>` |
 | [`meme-rush`](./.agents/skills/meme-rush) | Pump.fun / Four.meme 等发射台实时打新与叙事流 | `node .agents/skills/meme-rush/scripts/cli.mjs <cmd>` |
 
-### 3. 巨鲸与交易员追踪分析（3 个）
+### 3. 巨鲸与交易员追踪分析
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
 | [`binance-leaderboard`](./.agents/skills/binance-leaderboard) | Web3 交易员排行榜、Gem Hunter（寻宝）钱包筛选、6维交易画像打分 | `baw leaderboard <subcommand>` |
 | [`binance-wallet-tracker`](./.agents/skills/binance-wallet-tracker) | 钱包跟踪监控、共识买入检测、筹码吸筹/派发分析、大单异动监控 | `baw tracker <subcommand>` |
 | [`binance-trading-signal`](./.agents/skills/binance-trading-signal) | 平台策略、自定义信号策略管理与回测分析 | `baw signal <subcommand>` |
 
-### 4. 股票代币化与预测赛道（2 个）
+### 4. 股票代币化与预测赛道
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
 | [`binance-tokenized-securities-info`](./.agents/skills/binance-tokenized-securities-info) | Ondo 美股代币化资产（AAPL/NVDA/MSFT）行情、RWA 储备证明、美股基本面与K线 | 查询 Ondo RWA API |
 | [`binance-sports-ai-analyzer`](./.agents/skills/binance-sports-ai-analyzer) | 体育赛事与预测市场 AI 分析 | 赛事预测模型 |
 
-### 5. CEX 交易、法币与 P2P（3 个）
+### 5. CEX 交易、法币与 P2P
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
 | [`binance`](./.agents/skills/binance) | CEX 现货、合约（USD-S）、闪兑（Convert）与账户风控 | `node scripts/binance_unified.js <cmd>` / REST API |
 | [`fiat`](./.agents/skills/fiat) | 币安法币通道、出入金汇率、支付渠道与限额查询 | REST API |
 | [`p2p`](./.agents/skills/p2p) | P2P / C2C 广告盘口比价、订单追踪与商户资料 | REST API |
 
-### 6. 广场生态与教育赋能（3 个）
+### 6. 广场生态与教育赋能
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
 | [`square-mining`](./.agents/skills/square-mining) | 广场「内容挖矿」五步自动化工作流（热点选品→市场数据→新闻求证→拟真文案→自动发帖） | `/square-mining` 或自然语言触发 |
@@ -188,7 +188,7 @@
 ### 1. 更换计算机 / 全新环境部署（3 步极简部署）
 当本项目迁移至新计算机、或通过 Git Clone 到新环境时，仅需 3 步即可实现全功能开箱即用：
 1. **拉取代码**：
-   - 克隆或拷贝本项目文件夹。项目内置的 20 个 Skill（`.agents/skills/`）、代理模块（`scripts/`）、`.env.example` 与 `AGENTS.md` 将完整随身带入新环境。
+   - 克隆或拷贝本项目文件夹。项目内置的所有 Skill（`.agents/skills/`）、代理模块（`scripts/`）、`.env.example` 与 `AGENTS.md` 将完整随身带入新环境。
 2. **安装标准运行底座**：
    - 安装官方标准 Node.js（LTS 版本）；
    - 打开终端执行标准全局安装：
@@ -204,9 +204,9 @@
 本项目具备天然的 **Agent-Agnostic（跨平台智能体通用性）**：
 * **记忆与规则导入**：
   - 新 Agent 进入该项目后，仅需一条提示词引导：
-    > “请阅读根目录下的 `AGENTS.md`，严格遵循其中的架构规范、20 个 Skill 清单与实战 SOP 执行任务。”
+    > “请阅读根目录下的 `AGENTS.md`，严格遵循其中的架构规范、Skill 清单与实战 SOP 执行任务。”
 * **底层能力无锁定**：
-  - 本项目沉淀的全部 20 个 Skill 均基于**标准 CLI 与原生 Node.js / Python 脚本**，没有绑定 Antigravity 专有协议。
+  - 本项目沉淀的全部 Skill 均基于**标准 CLI 与原生 Node.js / Python 脚本**，没有绑定 Antigravity 专有协议。
   - 任何拥有终端执行权限的 Agent（如 OpenAI Codex、Claude Code、Cursor 等）均可直接运行：
     ```bash
     # 示例 1：查询全网热度榜
@@ -224,12 +224,12 @@
 ```text
 agitated-raman/ (binance-agentic)
 ├── .agents/
-│   └── skills/                  # 本项目专属的 20 个 Binance 官方技能包
+│   └── skills/                  # 本项目专属的 Binance 官方技能包
 │       ├── binance-agentic-wallet/
 │       ├── crypto-market-rank/
 │       ├── square-post/
 │       ├── trading-signal/
-│       └── ... (其余 16 个 Skill)
+│       └── ... (其余各官方 Skill)
 ├── scripts/
 │   ├── binance_unified.js      # CEX 现货/合约/风控一体化客户端（原生 fetch，免 curl 进程）
 │   ├── proxy_bootstrap.mjs     # 备用网络代理引导入口（仅非 TUN 纯端口代理模式时使用）
@@ -248,4 +248,4 @@ agitated-raman/ (binance-agentic)
 - [ ] 若 TUN 代理已开启，是否已直接运行原生脚本？（仅在非 TUN 环境下才需挂载 proxy_bootstrap）
 - [ ] 若操作 `baw`，是否确认 CLI 版本满足当前 Skill 依赖，并在有新版本发布时及时跟进升级？
 - [ ] 若生成广场内容，是否严格确保了纯文本排版（**0 Markdown**）并挂载了 CASHTAG？
-- [ ] 是否优先检索并复用了本项目的 20 个现成 Skill，杜绝了重复造轮子？
+- [ ] 是否优先检索并复用了本项目的现成 Skill，杜绝了重复造轮子？
