@@ -30,11 +30,20 @@
   2. **端口代理模式（备用方案 / TUN 关闭时）**：
      - 若未开启 TUN 模式，本地 HTTP/SOCKS 代理端口通常为 `http://127.0.0.1:7890`（已在 `.env` 中定义 `HTTP_PROXY` 与 `HTTPS_PROXY`）。
      - **为何存在 [`./scripts/proxy_bootstrap.mjs`](./scripts/proxy_bootstrap.mjs)**：Node.js 原生 `fetch`（基于 `undici`）默认不会主动读取 Windows 环境变量中的 `HTTP_PROXY`。在**纯端口代理环境（无 TUN）**下，可通过 `node --import ./scripts/proxy_bootstrap.mjs your_script.mjs` 注入 `ProxyAgent` 作为备用通道；而在 TUN 模式正常工作时，完全无需挂载此脚本。
+     - **代理模式实操验证方法**：
+       ```bash
+       # 验证 TUN 透明代理连通性（直连）
+       node -e "fetch('https://api.binance.com/api/v3/ping').then(r=>console.log('TUN OK', r.status)).catch(e=>console.log('TUN FAIL', e.message))"
+       # 验证备用端口代理引导（挂载 proxy_bootstrap）
+       node --import ./scripts/proxy_bootstrap.mjs -e "fetch('https://api.binance.com/api/v3/ping').then(r=>console.log('Proxy OK', r.status))"
+       ```
+     - **跨设备路径兼容**：`proxy_bootstrap.mjs` 内部采用动态多候选路径解析 `undici`（结合 `process.execPath`），避免因不同设备 Node.js 安装路径差异导致模块加载失败。
 
 ### 2. 命令行工具维护规范（`baw` CLI）
 * **完全动态与按需更新原则**：
   - `baw`（`@binance/agentic-wallet`）处于高频迭代期，**禁止在文档或逻辑中硬编码任何特定版本号**，以防后续会话因静态版本信息产生误判。
   - CLI 工具已注册至系统 `PATH`，全局各终端均可直接执行 `baw` 命令。
+  - **为何采用全局安装（`-g`）而非本地 `node_modules`**：本项目底层 20 个 Skill（如 `binance-wallet-tracker`、`binance-leaderboard` 等）在其规范中均以系统级 CLI 命令 `baw <command>` 直接调用。全局安装避免了在项目根目录引入冗余的 `package.json` 与繁琐的 `npx` / 相对路径前缀，确保所有 Skill、脚本与多 Agent 协同无缝原生执行。
 * **动态检查与按需升级**：
   - Agent 在执行涉及钱包或相关 Skill 的任务时，应以各 Skill 的 `requiredCliVersion` 声明或 npm 远端最新版为准动态适配。
   - 若提示版本不匹配或遇到新接口需求，执行动态检查与升级：
@@ -105,7 +114,7 @@
 ### 5. CEX 交易、法币与 P2P（3 个）
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
-| [`binance`](./.agents/skills/binance) | CEX 现货、合约（USD-S）、闪兑（Convert） | REST API / `binance-cli` |
+| [`binance`](./.agents/skills/binance) | CEX 现货、合约（USD-S）、闪兑（Convert）与账户风控 | `node scripts/binance_unified.js <cmd>` / REST API |
 | [`fiat`](./.agents/skills/fiat) | 币安法币通道、出入金汇率、支付渠道与限额查询 | REST API |
 | [`p2p`](./.agents/skills/p2p) | P2P / C2C 广告盘口比价、订单追踪与商户资料 | REST API |
 
@@ -132,13 +141,34 @@
 3. **美股代币化资产（bStocks）套利监控**：
    - 关注美股开盘时段链上 Ondo 代币（`NVDA`、`AAPL`）与现实股价的折溢价波动，结合持仓监控脚本实现自动止盈。
 
-### 2. CEX 现货/合约 API 交互 SOP
-1. **防止时间戳错误（`-1021`）**：
-   - 每次签名请求前，先请求 `GET https://api.binance.com/api/v3/time` 计算本地系统时差，在 query 参数中加上 `recvWindow=10000`。
-2. **防止签名错误（`-2015`）**：
-   - 严格采用 HMAC SHA256 加密 `queryString`，确保无多余空格，且 Headers 必须携带 `X-MBX-APIKEY`。
-3. **深度与巨鲸资金流分析**：
-   - 结合订单簿深度买卖墙差额（Bid/Ask Depth Ratio）与聪明钱净流入榜，判断支撑位是否牢固。
+### 2. CEX 现货/合约 API 交互与量化投研 SOP
+1. **统一客户端资产（`scripts/binance_unified.js`）**：
+   - 本项目已沉淀一体化客户端 [`scripts/binance_unified.js`](./scripts/binance_unified.js)，整合现货、合约、资金流、行情与风控接口。
+   - **全面采用 Node.js 原生 `fetch()`**：严禁再使用 `child_process.execSync('curl.exe ...')` 子进程方式调用，消除进程 fork 性能损耗、跨平台兼容问题（Windows/Linux）与 Shell 注入风险。
+   - **自动重试机制**：底层 `httpRequest()` 内置 2 次指数退避重试，有效抵御代理或网络层偶发的 Socket 重置。
+   - **核心 CLI 子命令速查**：
+     ```bash
+     # 1. 账户资产概览（Spot、Futures、Earn 理财与逐仓持仓）
+     node scripts/binance_unified.js status
+     # 2. 批量行情查询（最新价、24h 涨跌、高低点与成交量）
+     node scripts/binance_unified.js ticker BTCUSDT SOLUSDT
+     # 3. 市场情绪与微观盘口（大户多空比、资金费率、持仓量、主动买卖比）
+     node scripts/binance_unified.js sentiment SOLUSDT
+     # 4. 当前合约逐仓/全仓持仓与未结盈亏
+     node scripts/binance_unified.js positions
+     # 5. 历史成交与手续费查询
+     node scripts/binance_unified.js trades SOLUSDT 5
+     # 6. 为已有持仓设置止盈止损条件单（TPSL）
+     node scripts/binance_unified.js set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> <qty>
+     # 7. 开仓并强制绑定止盈止损（原子级风控）
+     node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>
+     ```
+2. **防时间戳错误（`-1021`）与签名机制**：
+   - 客户端内部已自动调用 `/api/v3/time` 计算并维护 `timeOffset`，并在每次签名时注入 `recvWindow=10000`，彻底避免本地系统时间不同步问题。
+   - 严格以 HMAC SHA256 签名 `queryString`，Header 携带 `X-MBX-APIKEY`。
+3. **交易安全与硬风控防线**：
+   - **严禁裸奔开仓**：所有自动化或人工开仓策略必须明确止损价，优先调用 `open-tpsl` 实现进场与止损单的原子绑定，拒绝无风控持仓。
+   - **流动性与深度求证**：开单前需结合订单簿深度买卖墙差额（Bid/Ask Depth Ratio）与聪明钱净流入榜，判断支撑位是否牢固。
 
 ### 3. 币安广场「内容挖矿 (Write to Earn)」SOP
 1. **第一步：热点与聪明钱选品**：
@@ -201,7 +231,9 @@ agitated-raman/ (binance-agentic)
 │       ├── trading-signal/
 │       └── ... (其余 16 个 Skill)
 ├── scripts/
-│   └── proxy_bootstrap.mjs     # 备用网络代理引导入口（仅非 TUN 纯端口代理模式时使用）
+│   ├── binance_unified.js      # CEX 现货/合约/风控一体化客户端（原生 fetch，免 curl 进程）
+│   ├── proxy_bootstrap.mjs     # 备用网络代理引导入口（仅非 TUN 纯端口代理模式时使用）
+│   └── publish_square.mjs      # 广场内容挖矿推流发布脚本
 ├── .env                         # 核心凭证配置文件（勿提交至公共仓库）
 ├── .env.example                 # 环境变量配置模板（公开、供新环境复现）
 ├── .gitignore                   # Git 忽略规则

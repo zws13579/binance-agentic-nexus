@@ -2,8 +2,11 @@ let setGlobalDispatcher, ProxyAgent;
 try {
   ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
 } catch {
+  // Dynamically resolve undici from Node.js install directory (portable across machines)
   try {
-    ({ setGlobalDispatcher, ProxyAgent } = await import('file:///C:/Users/admin/AppData/Local/Programs/nodejs/node_modules/undici/index.js'));
+    const { dirname, join } = await import('node:path');
+    const candidate = 'file:///' + join(dirname(process.execPath), 'node_modules', 'undici', 'index.js').replace(/\\/g, '/');
+    ({ setGlobalDispatcher, ProxyAgent } = await import(candidate));
   } catch {}
 }
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';

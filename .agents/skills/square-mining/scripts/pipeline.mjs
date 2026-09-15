@@ -14,8 +14,11 @@ let setGlobalDispatcher, ProxyAgent;
 try {
   ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
 } catch {
+  // Dynamically resolve undici from Node.js install directory (portable across machines)
   try {
-    ({ setGlobalDispatcher, ProxyAgent } = await import('file:///C:/Users/admin/AppData/Local/Programs/nodejs/node_modules/undici/index.js'));
+    const { dirname, join } = await import('node:path');
+    const candidate = 'file:///' + join(dirname(process.execPath), 'node_modules', 'undici', 'index.js').replace(/\\/g, '/');
+    ({ setGlobalDispatcher, ProxyAgent } = await import(candidate));
   } catch {}
 }
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -468,37 +471,35 @@ export function step4_generatePost({ trends, marketData, news, type = 'short' })
   if (archetype === 'macro') {
     // 模型 A: 传统金融宏观与通胀联动
     const macroNews = news.traditionalFinance.find(n => /inflation|rate|fed|wall street/i.test(n.title)) || news.traditionalFinance[0];
-    const newsMention = macroNews ? `华尔街和外媒都在紧盯“${macroNews.title.slice(0, 45)}...”` : '近期美债与通胀预期反复扰动';
+    const newsMention = macroNews ? `外媒财经要闻都在紧盯“${macroNews.title.slice(0, 45)}...”` : '近期美债与通胀预期反复扰动';
 
-    tag1 = trends.find(t => t.topic.includes('爆仓') || t.topic.includes('BTC'))?.hashtag || '#全网爆仓6.74亿美元';
-    tag2 = trends.find(t => t.topic.includes('ETH') || t.topic.includes('Wintermute'))?.hashtag || '#Wintermute存入ETH';
+    tag1 = trends.find(t => t.topic.includes('爆仓') || t.topic.includes('BTC') || t.topic.includes('庞普'))?.hashtag || '#全网爆仓6.74亿美元';
+    tag2 = trends.find(t => t.topic.includes('ETH') || t.topic.includes('Wintermute'))?.hashtag || '#Wintermute转账';
 
     title = `美股通胀预期升温，大饼76K拉锯背后的宏观暗流`;
-    postContent = `最近看外媒财经资讯，${newsMention}，宏观流动性的预期显然又在收紧。
+    postContent = `最近看外媒财经要闻，${newsMention}，宏观流动性收紧的刀已经架在头上了。
 
-映射到盘面上，大饼 $BTC 已经连续几天被死死按在 ${btcPriceStr} 附近来回锯齿震荡，稍微冲一下就遭遇无情砸盘。很多散户在日内上下500点的空间里被磨得心力交瘁，这正是典型的宏观观望期特征。
+大饼 $BTC 连续几天被按在 ${btcPriceStr} 附近来回锯齿震荡，日内振幅连1%都不到，很多人还在幻想着马上暴力拉升，纯属自欺欺人。流动性枯竭的阶段，每次脉冲冲高都是标准的诱多陷阱。
 
-以太坊 $ETH 表现更弱，在 ${ethPriceStr} 附近承压，合约资金费率持续在 ${ethFr} 低位徘徊。虽然有做市商频繁倒手转移筹码，但在美联储利率路径和真实通胀拐点明朗之前，机构大钱根本不可能在这种位置无脑接盘。
+以太坊 $ETH 更是弱得毫无悬念，在 ${ethPriceStr} 附近持续承压，合约资金费率持续在 ${ethFr} 低位徘徊。在宏观利率拐点明朗之前，机构大钱根本不可能在这种位置进场当接盘侠。
 
-老韭菜的经验是，每次传统金融资金犹豫不决的时候，场内就极易演变成存量互割的“绞肉机行情”。与其在阻力位前硬猜方向上高杠杆，不如多关注宏观风向，留好手里的子弹。
-
-大家目前是空仓观望还是拿着现货死扛？
+大盘要死不活的时候，与其在高位杠杆里给做市商送手续费，不如承认现实：大方向没走出来之前，管住手才是最大的利润。
 
 ${tag1} ${tag2}`;
 
   } else if (archetype === 'whale') {
     // 模型 B: 链上做市商与流动性猎杀
-    tag1 = trends.find(t => t.topic.includes('Wintermute') || t.topic.includes('ETH'))?.hashtag || '#Wintermute存入ETH';
-    tag2 = trends.find(t => t.topic.includes('爆仓') || t.topic.includes('清算'))?.hashtag || '#全网爆仓6.74亿美元';
+    tag1 = trends.find(t => t.topic.includes('Wintermute') || t.topic.includes('转账') || t.topic.includes('ETH'))?.hashtag || '#Wintermute转账';
+    tag2 = trends.find(t => t.topic.includes('爆仓') || t.topic.includes('清算') || t.topic.includes('积累'))?.hashtag || '#鲸鱼积累';
 
     title = `巨鲸大额现货归集，做市商这套流动性猎杀逻辑必须看懂`;
-    postContent = `这两天链上监控刷屏，做市巨鲸频繁将大额以太坊归集进交易所，广场上讨论直接破了十几万。
+    postContent = `这两天链上监控疯狂报警，做市巨鲸大额现货密集归集进交易所，广场上一堆人还在无脑喊多头牛回。
 
-很多人一看到做市商转币就喊大暴跌，但盘面真相往往没那么单纯。以太坊 $ETH 目前挂在 ${ethPriceStr} 附近反复试探支撑，做市商在大额搬砖的同时，往往伴随着期权衍生品的对冲锁仓，核心目的是在清淡流动性里两头吃利差，顺带把挂单密集的散户止损单打掉。
+做市商转币从来不是做慈善。以太坊 $ETH 挂在 ${ethPriceStr} 附近反复试探，大额现货搬砖配合期权对冲，核心目的就是把两头挂单密集的杠杆流动性吃干抹净。大饼 $BTC 在 ${btcPriceStr} 关键位附近缩量横盘，主力这种不温不火的拉升试盘，就是最典型的流动性围剿。
 
-再看大饼 $BTC，在 ${btcPriceStr} 关键位附近缩量横盘。只要大盘没有走出单边放量突破，主力在这个位置的每一次反弹拉升，都极大概率是流动性猎杀。
+很多人盯着单笔链上大额转账就无脑跟单，往往死得最惨。盘面不放量放度确认，所有的插针都是为了给大资金出货打掩护。
 
-跟做市商玩，最忌讳的就是盯着链上单笔转账无脑跟风。盘面不放量确认，所有的插针都是试盘。控制好杠杆倍数，保住本金比什么都重要。
+市场最残酷的真相就是：当你以为跟上巨鲸节奏的时候，你其实早就成了做市商算盘里的对手盘。
 
 ${tag1} ${tag2}`;
 
@@ -508,17 +509,17 @@ ${tag1} ${tag2}`;
     const featuredSymbol = isZec ? '$ZEC' : '$DOGE';
     const featuredPrice = isZec ? Math.round(zec.price).toLocaleString() : doge.price;
 
-    tag1 = trends.find(t => t.topic.includes('Zcash') || t.topic.includes('DOGE') || t.topic.includes('ETF'))?.hashtag || '#Zcash挖矿激增';
-    tag2 = trends.find(t => t.topic.includes('清算') || t.topic.includes('爆仓'))?.hashtag || '#全网爆仓6.74亿美元';
+    tag1 = trends.find(t => t.topic.includes('DOGE') || t.topic.includes('Zcash') || t.topic.includes('ETF'))?.hashtag || '#DOGE的社区支持';
+    tag2 = trends.find(t => t.topic.includes('清算') || t.topic.includes('爆仓') || t.topic.includes('看好'))?.hashtag || '#全网爆仓6.74亿美元';
 
     title = `老牌币种题材异动，狂欢背后谨防庄家拉高出货`;
-    postContent = `这两天老牌赛道异动频频，${featuredSymbol} 突然成为讨论焦点，价格波动剧烈，报价来到 ${featuredPrice} 附近。
+    postContent = `这两天老牌题材突然集体异动，${featuredSymbol} 成了全场焦点，报价剧烈波动在 ${featuredPrice} 附近。
 
-不管是传闻算力激增还是所谓的机构ETF产品调整，老韭菜必须保持清醒：在整体流动性有限的震荡市里，老币种借着突发叙事放量拉升，十有八九是潜伏主力借着流动性高潮在悄悄派发筹码。
+不管是炒作算力暴涨还是意淫ETF审批落地，真相永远只有一个：存量博弈市场里，老币种借着突发叙事脉冲放量，从来都是潜伏主力借着流动性高潮在关门收割。
 
-大盘大饼 $BTC 仍在 ${btcPriceStr} 附近震荡磨人，主流还没真正确立新一轮大趋势。当大盘都在走弱回调时，任何脱离基本面的山寨脉冲都极难维持持久性。
+大盘大饼 $BTC 还在 ${btcPriceStr} 附近震荡磨人，主流资产都没走出来，脱离基本面的山寨脉冲注定只有三分钟热度。
 
-别一看到题材新闻就盲目无脑冲，被套在树顶上往往就是一瞬间。等盘面回调到真正强支撑、大盘止跌企稳了再看也不迟。
+把题材当信仰的人，最后都会被挂在树顶上站岗。看不懂筹码出货逻辑的，迟早要把本金全吐回去。
 
 ${tag1} ${tag2}`;
 
@@ -528,13 +529,13 @@ ${tag1} ${tag2}`;
     tag2 = trends.find(t => t.topic.includes('BTC') || t.topic.includes('爆仓'))?.hashtag || '#全网爆仓6.74亿美元';
 
     title = `链上安全事件频发，行情洗盘期如何守住钱包本金`;
-    postContent = `最近主流机构和金融平台数据泄露的新闻闹得沸沸扬扬，黑客通过伪造邮件和诱导授权钓走资产的案例层出不穷。
+    postContent = `各大金融机构和平台数据泄露频发，黑客利用伪造官方邮件定向钓鱼的案子层出不穷。
 
-越是在市场行情冷清、大饼 $BTC 在 ${btcPriceStr} 附近来回洗盘磨人的时候，大家的防范心理往往越容易松懈。各种冒充官方空投、账户升级的钓鱼链接铺天盖地，稍不留神就会把授权给出去。
+行情冷清、大饼 $BTC 在 ${btcPriceStr} 附近来回洗盘磨人的时候，往往就是散户警惕性最低的危险期。一堆人被震荡行情搞得心浮气躁，看到所谓的空投升级就随手签名授权，多年积累瞬间归零。
 
-行情做不好大不了少赚点，但钱包要是被黑了，多年积累直接归零。建议各位交易员抽空彻底排查一下自己的钱包授权，长期不动的资产尽量隔离存放在冷钱包或主流大所。
+在币圈活下去的第一铁律：赚钱看大势，亏光往往只需要一次随意授权。
 
-在加密圈摸爬滚打，赚钱靠周期，守财靠风控。安全第一，交易第二。
+连自己钱包私钥和授权都管不好的，就算大牛市真的来了，也逃不过被洗劫一空的下场。
 
 ${tag1} ${tag2}`;
   }
