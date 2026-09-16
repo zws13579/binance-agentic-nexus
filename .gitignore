@@ -1,12 +1,73 @@
+# ==============================================================================
+# Binance Agentic Nexus (BAN) - Git 忽略规则
+# ==============================================================================
+
+# 1. 核心凭据与机密文件 (严禁提交，防止泄密)
 .env
 .env.*
+*.env
 !.env.example
-node_modules/
-*.log
+!*.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.pfx
+*.cert
+secrets/
 
-# 系统与编辑器临时文件
-.DS_Store
-Thumbs.db
+# 2. Node.js 运行时与依赖
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# 3. Python 运行时与虚拟环境
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# 4. 日志、临时文件与数据库
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.tmp
+*.bak
 *.swp
 *.swo
-*.tmp
+*~
+
+# 5. 操作系统专有文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# 6. 编辑器与 IDE 配置
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sublime-workspace
+*.sublime-project
