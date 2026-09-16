@@ -1,14 +1,17 @@
-# AGENTS.md - Binance Agentic 统一运行规范与项目知识库
+# AGENTS.md - Binance Agentic Nexus (BAN) 统一运行规范与全景知识库
 
-> 本文件是本项目（`binance-agentic` / `agitated-raman`）的最高运行准则与全景记忆文档。  
-> 任何后续对话中的 Agent 进驻本项目时，**必须第一时间阅读并严格遵循本文档所载的所有架构、规范与经验精髓**，严禁重复造轮子，严禁脱离现有资产盲目开发。
+> **项目正式名称**：**`Binance Agentic Nexus`**（简称 **`BAN`** / 仓库名：`binance-agentic-nexus`）  
+> **定位描述**：打通 CEX 量化风控、Web3 链上智能钱包、全网聪明钱情报雷达与币安广场内容挖矿的三位一体 AI 智能体操作系统。  
+> *(注：当前本地工作区物理目录名为 `agitated-raman`)*  
+> 
+> 本文件是本项目的最高运行准则与全景记忆文档。任何后续对话中的 Agent 进驻本项目时，**必须第一时间阅读并严格遵循本文档所载的所有架构、规范与经验精髓**，严禁重复造轮子，严禁脱离现有资产盲目开发。
 
 ---
 
 ## 一、项目核心背景与基本准则
 
 1. **项目定位**：
-   - 本项目致力于构建一套基于 AI 智能体（Agent）驱动的币安综合生态交互与量化投研系统，打通 **Web3 链上智能钱包**、**CEX 现货/合约量化与盘口追踪**、**全网 Alpha 聪明钱/情绪情报监控** 以及 **币安广场（Binance Square）内容挖矿自动化**。
+   - **Binance Agentic Nexus (BAN)** 致力于构建一套基于多智能体（Agentic AI）驱动的币安综合生态交互与量化投研系统，深度打通 **Web3 链上智能钱包**、**CEX 现货/合约量化与盘口追踪**、**全网 Alpha 聪明钱/情绪情报监控** 以及 **币安广场（Binance Square）内容挖矿自动化**。
 2. **第一铁律：严禁重复造轮子**：
    - 本项目经历过多轮深度对话演进，沉淀了极其丰富的本地 Skill、环境配置与核心脚本。
    - **禁止**在没有检查项目现有资产的情况下自行重写测试脚本或安装冗余依赖。
@@ -222,7 +225,7 @@
 ## 六、项目文件目录树全景
 
 ```text
-agitated-raman/ (binance-agentic)
+binance-agentic-nexus/ (本地目录: agitated-raman)
 ├── .agents/
 │   └── skills/                  # 本项目专属的 Binance 官方技能包
 │       ├── binance-agentic-wallet/
