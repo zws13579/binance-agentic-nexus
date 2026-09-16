@@ -27,6 +27,7 @@ if (setGlobalDispatcher && ProxyAgent) {
   try { setGlobalDispatcher(new ProxyAgent(proxyUrl)); } catch {}
 }
 
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -460,10 +461,16 @@ export function step4_generatePost({ trends, marketData, news, type = 'short' })
   const ethPriceStr = Math.round(eth.price).toLocaleString();
   const ethFr = marketData.cex.fundingRates['ETH']?.fundingRate || '-0.002%';
 
-  // 匹配最佳广场借势标签 (1~2个)
-  let tag1 = trends[0]?.hashtag || '#全网爆仓6.74亿美元';
-  let tag2 = trends[1]?.hashtag || '#Wintermute存入ETH';
+  // 辅助函数：选取两个不重复的广场借势标签
+  function pickTags(trendsList, regex1, regex2) {
+    const t1 = trendsList.find(t => regex1.test(t.topic))?.hashtag || trendsList[0]?.hashtag || '#全网爆仓6.74亿美元';
+    const t2 = trendsList.find(t => regex2.test(t.topic) && t.hashtag !== t1)?.hashtag ||
+               trendsList.find(t => t.hashtag !== t1)?.hashtag ||
+               '#币安广场';
+    return [t1, t2];
+  }
 
+  let tag1, tag2;
   let postContent = '';
   let title = '';
 
@@ -471,10 +478,9 @@ export function step4_generatePost({ trends, marketData, news, type = 'short' })
   if (archetype === 'macro') {
     // 模型 A: 传统金融宏观与通胀联动
     const macroNews = news.traditionalFinance.find(n => /inflation|rate|fed|wall street/i.test(n.title)) || news.traditionalFinance[0];
-    const newsMention = macroNews ? `外媒财经要闻都在紧盯“${macroNews.title.slice(0, 45)}...”` : '近期美债与通胀预期反复扰动';
+    const newsMention = macroNews ? `各大机构都在紧盯“${macroNews.title.slice(0, 45)}...”` : '近期美债与通胀预期反复扰动';
 
-    tag1 = trends.find(t => t.topic.includes('爆仓') || t.topic.includes('BTC') || t.topic.includes('庞普'))?.hashtag || '#全网爆仓6.74亿美元';
-    tag2 = trends.find(t => t.topic.includes('ETH') || t.topic.includes('Wintermute'))?.hashtag || '#Wintermute转账';
+    [tag1, tag2] = pickTags(trends, /爆仓|BTC|贝莱德/i, /ETH|Wintermute|买入/i);
 
     title = `美股通胀预期升温，大饼76K拉锯背后的宏观暗流`;
     postContent = `最近看外媒财经要闻，${newsMention}，宏观流动性收紧的刀已经架在头上了。
@@ -489,8 +495,7 @@ ${tag1} ${tag2}`;
 
   } else if (archetype === 'whale') {
     // 模型 B: 链上做市商与流动性猎杀
-    tag1 = trends.find(t => t.topic.includes('Wintermute') || t.topic.includes('转账') || t.topic.includes('ETH'))?.hashtag || '#Wintermute转账';
-    tag2 = trends.find(t => t.topic.includes('爆仓') || t.topic.includes('清算') || t.topic.includes('积累'))?.hashtag || '#鲸鱼积累';
+    [tag1, tag2] = pickTags(trends, /Wintermute|转账|ETH/i, /爆仓|清算|积累|巨鲸/i);
 
     title = `巨鲸大额现货归集，做市商这套流动性猎杀逻辑必须看懂`;
     postContent = `这两天链上监控疯狂报警，做市巨鲸大额现货密集归集进交易所，广场上一堆人还在无脑喊多头牛回。
@@ -509,8 +514,7 @@ ${tag1} ${tag2}`;
     const featuredSymbol = isZec ? '$ZEC' : '$DOGE';
     const featuredPrice = isZec ? Math.round(zec.price).toLocaleString() : doge.price;
 
-    tag1 = trends.find(t => t.topic.includes('DOGE') || t.topic.includes('Zcash') || t.topic.includes('ETF'))?.hashtag || '#DOGE的社区支持';
-    tag2 = trends.find(t => t.topic.includes('清算') || t.topic.includes('爆仓') || t.topic.includes('看好'))?.hashtag || '#全网爆仓6.74亿美元';
+    [tag1, tag2] = pickTags(trends, /DOGE|Zcash|ETF/i, /清算|爆仓|社区/i);
 
     title = `老牌币种题材异动，狂欢背后谨防庄家拉高出货`;
     postContent = `这两天老牌题材突然集体异动，${featuredSymbol} 成了全场焦点，报价剧烈波动在 ${featuredPrice} 附近。
@@ -525,8 +529,7 @@ ${tag1} ${tag2}`;
 
   } else {
     // 模型 D: 安全漏洞与链上风控防钓鱼
-    tag1 = trends.find(t => t.topic.includes('Revolut') || t.topic.includes('安全'))?.hashtag || '#Revolut数据泄露';
-    tag2 = trends.find(t => t.topic.includes('BTC') || t.topic.includes('爆仓'))?.hashtag || '#全网爆仓6.74亿美元';
+    [tag1, tag2] = pickTags(trends, /Revolut|安全|泄露/i, /BTC|爆仓/i);
 
     title = `链上安全事件频发，行情洗盘期如何守住钱包本金`;
     postContent = `各大金融机构和平台数据泄露频发，黑客利用伪造官方邮件定向钓鱼的案子层出不穷。
@@ -618,15 +621,46 @@ export async function step5_publishPost(post, { dryRun = false } = {}) {
 }
 
 // ==========================================
+// 统一数据采集导出 (Data Collection Only)
+// ==========================================
+export async function collectData() {
+  const trends = await step1_fetchTrends();
+  const marketData = await step2_fetchMarketData();
+  const news = await step3_fetchNews();
+  return { trends, marketData, news };
+}
+
+// ==========================================
 // 统一驱动函数 (CLI Pipeline Runner)
 // ==========================================
-export async function runPipeline({ dryRun = true, type = 'short' } = {}) {
-  console.log('\n======================================================');
-  console.log('   🚀 币安广场【内容挖矿】端到端全自动工作流启动');
-  console.log(`   模式: ${dryRun ? 'DRY-RUN (试运行预览)' : 'LIVE-PUBLISH (实际发布)'} | 格式: ${type}`);
-  console.log('======================================================\n');
-
+export async function runPipeline({ dryRun = true, type = 'short', text = null, title = null, file = null } = {}) {
   try {
+    // 模式 1: 直接传入外部文案或文件进行推流（AI Agent 原创模式，0 代码改动）
+    if (text || file) {
+      let content = text;
+      if (file) {
+        content = fs.readFileSync(file, 'utf-8');
+      }
+      content = content.trim();
+
+      const contentType = title ? 2 : (type === 'article' ? 2 : 1);
+      const post = {
+        type: contentType === 2 ? 'article' : 'short',
+        contentType,
+        title: title || (contentType === 2 ? '币安广场市场深度复盘' : null),
+        bodyTextOnly: content,
+        archetype: 'dynamic_ai',
+      };
+
+      return await step5_publishPost(post, { dryRun });
+    }
+
+    // 模式 2: 完整五步全自动流水线（纯 CLI / 定时任务兜底）
+    console.log('\n======================================================');
+    console.log('   🚀 币安广场【内容挖矿】端到端全自动工作流启动');
+    console.log(`   模式: ${dryRun ? 'DRY-RUN (试运行预览)' : 'LIVE-PUBLISH (实际发布)'} | 格式: ${type}`);
+    console.log('======================================================\n');
+
     const trends = await step1_fetchTrends();
     const marketData = await step2_fetchMarketData();
     const news = await step3_fetchNews();
@@ -646,12 +680,37 @@ export async function runPipeline({ dryRun = true, type = 'short' } = {}) {
 // CLI Direct Execution
 if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || import.meta.url === pathToFileURL(process.argv[1]).href)) {
   const args = process.argv.slice(2);
+
+  function getArgValue(flag) {
+    const idx = args.indexOf(flag);
+    return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : null;
+  }
+
+  const isCollect = args.includes('--collect') || args.includes('--data-only');
   const isPublish = args.includes('--publish');
   const isDryRun = args.includes('--dry-run') || !isPublish;
   const isArticle = args.includes('--article');
   const type = isArticle ? 'article' : 'short';
 
-  await runPipeline({ dryRun: isDryRun, type });
+  const textArg = getArgValue('--text') || getArgValue('--publish-text');
+  const fileArg = getArgValue('--file');
+  const titleArg = getArgValue('--title');
+
+  if (isCollect) {
+    const data = await collectData();
+    console.log('\n===== DATA_JSON_START =====');
+    console.log(JSON.stringify(data, null, 2));
+    console.log('===== DATA_JSON_END =====\n');
+    process.exit(0);
+  }
+
+  await runPipeline({
+    dryRun: isDryRun,
+    type,
+    text: textArg,
+    title: titleArg,
+    file: fileArg,
+  });
 }
 
 

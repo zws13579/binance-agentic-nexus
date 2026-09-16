@@ -2,7 +2,6 @@
 
 > **项目正式名称**：**`Binance Agentic Nexus`**（简称 **`BAN`** / 仓库名：`binance-agentic-nexus`）  
 > **定位描述**：打通 CEX 量化风控、Web3 链上智能钱包、全网聪明钱情报雷达与币安广场内容挖矿的三位一体 AI 智能体操作系统。  
-> *(注：当前本地工作区物理目录名为 `agitated-raman`)*  
 > 
 > 本文件是本项目的最高运行准则与全景记忆文档。任何后续对话中的 Agent 进驻本项目时，**必须第一时间阅读并严格遵循本文档所载的所有架构、规范与经验精髓**，严禁重复造轮子，严禁脱离现有资产盲目开发。
 
@@ -237,7 +236,7 @@
 ## 六、项目文件目录树全景
 
 ```text
-binance-agentic-nexus/ (本地目录: agitated-raman)
+binance-agentic-nexus/
 ├── .gitmodules                 # Git 子模块注册文件 (关联 binance-skills-hub)
 ├── .agents/
 │   ├── skills.json             # Antigravity 技能扫描路径声明（binance / binance-web3 / custom）
