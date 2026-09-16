@@ -24,7 +24,7 @@ description: >-
 ## 目录结构 (Directory Structure)
 
 ```text
-.agents/skills/square-mining/
+.agents/skills/custom/square-mining/
 ├── SKILL.md                          # 本说明主文档
 ├── scripts/
 │   └── pipeline.mjs                  # 可执行底层批处理管线 (支持 --dry-run / --publish)

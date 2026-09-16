@@ -28,7 +28,7 @@ if (!apiKey) {
 const maskedKey = apiKey.length <= 9 ? apiKey.slice(0, 2) + '...' : `${apiKey.slice(0, 5)}...${apiKey.slice(-4)}`;
 console.log(`Using Square API key: ${maskedKey}`);
 
-const skillLibPath = path.join(__dirname, '..', '.agents', 'skills', 'square-post', 'scripts', 'lib.mjs');
+const skillLibPath = path.join(__dirname, '..', '.agents', 'skills', 'official', 'square-post', 'scripts', 'lib.mjs');
 const { publish, printPublishSuccess } = await import(`file://${skillLibPath.replace(/\\/g, '/')}`);
 
 const title = "Wintermute巨资异动！大盘多空双杀后，这几个关键位必须盯紧";
