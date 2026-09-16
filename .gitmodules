@@ -1,0 +1,3 @@
+[submodule ".agents/skills/binance-skills-hub"]
+	path = .agents/skills/binance-skills-hub
+	url = https://github.com/binance/binance-skills-hub.git

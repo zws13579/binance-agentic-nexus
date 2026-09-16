@@ -82,51 +82,52 @@
 
 ## 三、项目技能体系（官方与自研 Skill 分层清单）
 
-所有 Skill 统一存放于项目工作区目录 [`.agents/skills/`](./.agents/skills/) 下，完全与全局配置隔离。通过根目录 [`.agents/skills.json`](./.agents/skills.json) 统一注册扫描路径，划分为 **`official/`（官方原生包）** 与 **`custom/`（本地自研/编排包）** 两大体系。
+所有 Skill 统一存放于项目工作区目录 [`.agents/skills/`](./.agents/skills/) 下，完全与全局配置隔离。通过根目录 [`.agents/skills.json`](./.agents/skills.json) 统一注册扫描路径，划分为 **`binance-skills-hub`（官方开源 Git Submodule）** 与 **`custom/`（本地自研/编排包）** 两大体系。
 
-### 1. Web3 链上钱包与资金流 (Official)
+### 1. Web3 链上钱包与资金流 (Official: binance-web3 & binance)
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
-| [`binance-agentic-wallet`](./.agents/skills/official/binance-agentic-wallet) | Web3 钱包连接、代币转账、DEX 交易、签名、DeFi 质押、预测市场 | `baw <command> --json` |
-| [`onchain-pay`](./.agents/skills/official/onchain-pay) | 法币买币并直接提至链上钱包（一键购币直达） | `sign_and_call.sh` |
-| [`payment`](./.agents/skills/official/payment) | Binance Pay 扫码与链接收付款（C2C / PIX） | `python payment_skill.py` |
+| [`binance-agentic-wallet`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-agentic-wallet) | Web3 钱包连接、代币转账、DEX 交易、签名、DeFi 质押、预测市场 | `baw <command> --json` |
+| [`onchain-pay`](./.agents/skills/binance-skills-hub/skills/binance/onchain-pay) | 法币买币并直接提至链上钱包（一键购币直达） | `sign_and_call.sh` |
+| [`payment`](./.agents/skills/binance-skills-hub/skills/binance/payment) | Binance Pay 扫码与链接收付款（C2C / PIX） | `python payment_skill.py` |
 
-### 2. 市场热度、代币筛选与情报发现 (Official)
+### 2. 市场热度、代币筛选与情报发现 (Official: binance-web3)
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
-| [`crypto-market-rank`](./.agents/skills/official/crypto-market-rank) | 社交热度榜、代币热搜/涨幅榜、聪明钱净流入榜、Meme 发射台打新榜、交易员盈亏榜 | `node .agents/skills/official/crypto-market-rank/scripts/cli.mjs <cmd>` |
-| [`query-token-info`](./.agents/skills/official/query-token-info) | 查代币合约、实时价格、流动性、池子、K线与社交信息 | `node .agents/skills/official/query-token-info/scripts/cli.mjs <cmd>` |
-| [`query-address-info`](./.agents/skills/official/query-address-info) | 查单个钱包地址的多链代币持仓与价值快照 | `node .agents/skills/official/query-address-info/scripts/cli.mjs <cmd>` |
-| [`query-token-audit`](./.agents/skills/official/query-token-audit) | 代币安全审计、貔貅/假币/蜜罐合约检测 | 内置合约安全审计模型 |
-| [`trading-signal`](./.agents/skills/official/trading-signal) | 单笔链上聪明钱买卖信号、跟单收益率分析 | `node .agents/skills/official/trading-signal/scripts/cli.mjs <cmd>` |
-| [`meme-rush`](./.agents/skills/official/meme-rush) | Pump.fun / Four.meme 等发射台实时打新与叙事流 | `node .agents/skills/official/meme-rush/scripts/cli.mjs <cmd>` |
+| [`crypto-market-rank`](./.agents/skills/binance-skills-hub/skills/binance-web3/crypto-market-rank) | 社交热度榜、代币热搜/涨幅榜、聪明钱净流入榜、Meme 发射台打新榜、交易员盈亏榜 | `node .agents/skills/binance-skills-hub/skills/binance-web3/crypto-market-rank/scripts/cli.mjs <cmd>` |
+| [`query-token-info`](./.agents/skills/binance-skills-hub/skills/binance-web3/query-token-info) | 查代币合约、实时价格、流动性、池子、K线与社交信息 | `node .agents/skills/binance-skills-hub/skills/binance-web3/query-token-info/scripts/cli.mjs <cmd>` |
+| [`query-address-info`](./.agents/skills/binance-skills-hub/skills/binance-web3/query-address-info) | 查单个钱包地址的多链代币持仓与价值快照 | `node .agents/skills/binance-skills-hub/skills/binance-web3/query-address-info/scripts/cli.mjs <cmd>` |
+| [`query-token-audit`](./.agents/skills/binance-skills-hub/skills/binance-web3/query-token-audit) | 代币安全审计、貔貅/假币/蜜罐合约检测 | 内置合约安全审计模型 |
+| [`trading-signal`](./.agents/skills/binance-skills-hub/skills/binance-web3/trading-signal) | 单笔链上聪明钱买卖信号、跟单收益率分析 | `node .agents/skills/binance-skills-hub/skills/binance-web3/trading-signal/scripts/cli.mjs <cmd>` |
+| [`meme-rush`](./.agents/skills/binance-skills-hub/skills/binance-web3/meme-rush) | Pump.fun / Four.meme 等发射台实时打新与叙事流 | `node .agents/skills/binance-skills-hub/skills/binance-web3/meme-rush/scripts/cli.mjs <cmd>` |
 
-### 3. 巨鲸与交易员追踪分析 (Official)
+### 3. 巨鲸与交易员追踪分析 (Official: binance-web3)
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
-| [`binance-leaderboard`](./.agents/skills/official/binance-leaderboard) | Web3 交易员排行榜、Gem Hunter（寻宝）钱包筛选、6维交易画像打分 | `baw leaderboard <subcommand>` |
-| [`binance-wallet-tracker`](./.agents/skills/official/binance-wallet-tracker) | 钱包跟踪监控、共识买入检测、筹码吸筹/派发分析、大单异动监控 | `baw tracker <subcommand>` |
-| [`binance-trading-signal`](./.agents/skills/official/binance-trading-signal) | 平台策略、自定义信号策略管理与回测分析 | `baw signal <subcommand>` |
+| [`binance-leaderboard`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-leaderboard) | Web3 交易员排行榜、Gem Hunter（寻宝）钱包筛选、6维交易画像打分 | `baw leaderboard <subcommand>` |
+| [`binance-wallet-tracker`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-wallet-tracker) | 钱包跟踪监控、共识买入检测、筹码吸筹/派发分析、大单异动监控 | `baw tracker <subcommand>` |
+| [`binance-trading-signal`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-trading-signal) | 平台策略、自定义信号策略管理与回测分析 | `baw signal <subcommand>` |
+| [`binance-onchain-copy-trader`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-onchain-copy-trader) | 链上跟单交易器与自动化执行 | 链上跟单交互模型 |
 
-### 4. 股票代币化与预测赛道 (Official)
+### 4. 股票代币化与预测赛道 (Official: binance-web3)
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
-| [`binance-tokenized-securities-info`](./.agents/skills/official/binance-tokenized-securities-info) | Ondo 美股代币化资产（AAPL/NVDA/MSFT）行情、RWA 储备证明、美股基本面与K线 | 查询 Ondo RWA API |
-| [`binance-sports-ai-analyzer`](./.agents/skills/official/binance-sports-ai-analyzer) | 体育赛事与预测市场 AI 分析 | 赛事预测模型 |
+| [`binance-tokenized-securities-info`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-tokenized-securities-info) | Ondo 美股代币化资产（AAPL/NVDA/MSFT）行情、RWA 储备证明、美股基本面与K线 | 查询 Ondo RWA API |
+| [`binance-sports-ai-analyzer`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-sports-ai-analyzer) | 体育赛事与预测市场 AI 分析 | 赛事预测模型 |
 
-### 5. CEX 交易、法币与 P2P (Official)
+### 5. CEX 交易、法币与 P2P (Official: binance)
 | 技能目录 | 说明 | 核心调用方式 |
 | :--- | :--- | :--- |
-| [`binance`](./.agents/skills/official/binance) | CEX 现货、合约（USD-S）、闪兑（Convert）与账户风控 | `node scripts/binance_unified.js <cmd>` / REST API |
-| [`fiat`](./.agents/skills/official/fiat) | 币安法币通道、出入金汇率、支付渠道与限额查询 | REST API |
-| [`p2p`](./.agents/skills/official/p2p) | P2P / C2C 广告盘口比价、订单追踪与商户资料 | REST API |
+| [`binance`](./.agents/skills/binance-skills-hub/skills/binance/binance) | CEX 现货、合约（USD-S）、闪兑（Convert）与账户风控 | `node scripts/binance_unified.js <cmd>` / REST API |
+| [`fiat`](./.agents/skills/binance-skills-hub/skills/binance/fiat) | 币安法币通道、出入金汇率、支付渠道与限额查询 | REST API |
+| [`p2p`](./.agents/skills/binance-skills-hub/skills/binance/p2p) | P2P / C2C 广告盘口比价、订单追踪与商户资料 | REST API |
 
 ### 6. 广场生态与教育赋能 (Official & Custom)
 | 技能目录 | 类型 | 说明 | 核心调用方式 |
 | :--- | :---: | :--- | :--- |
 | [`square-mining`](./.agents/skills/custom/square-mining) | 自研定制 | 广场「内容挖矿」五步自动化工作流（热点选品→市场数据→新闻求证→拟真文案→自动发帖） | `/square-mining` 或 `node .agents/skills/custom/square-mining/scripts/pipeline.mjs` |
-| [`square-post`](./.agents/skills/official/square-post) | 官方原生 | 币安广场自动发帖（短动态、长文章、带图帖、视频帖） | `node .agents/skills/official/square-post/scripts/post-*.mjs` |
-| [`academy-skill`](./.agents/skills/official/academy-skill) | 官方原生 | 币安学院官方教育内容（词汇表、课程、学赚体系） | 知识问答检索 |
+| [`square-post`](./.agents/skills/binance-skills-hub/skills/binance/square-post) | 官方原生 | 币安广场自动发帖（短动态、长文章、带图帖、视频帖） | `node .agents/skills/binance-skills-hub/skills/binance/square-post/scripts/post-*.mjs` |
+| [`academy-skill`](./.agents/skills/binance-skills-hub/skills/binance/academy-skill) | 官方原生 | 币安学院官方教育内容（词汇表、课程、学赚体系） | 知识问答检索 |
 
 ---
 
@@ -190,8 +191,13 @@
 
 ### 1. 更换计算机 / 全新环境部署（3 步极简部署）
 当本项目迁移至新计算机、或通过 Git Clone 到新环境时，仅需 3 步即可实现全功能开箱即用：
-1. **拉取代码**：
-   - 克隆或拷贝本项目文件夹。项目内置的所有 Skill（`.agents/skills/`）、代理模块（`scripts/`）、`.env.example` 与 `AGENTS.md` 将完整随身带入新环境。
+1. **拉取代码（带子模块递归克隆）**：
+   ```bash
+   # 克隆主项目并自动拉取 binance-skills-hub 官方子模块
+   git clone --recurse-submodules <repository-url>
+   # 若已执行普通 git clone，执行此命令补拉子模块：
+   git submodule update --init --recursive
+   ```
 2. **安装标准运行底座**：
    - 安装官方标准 Node.js（LTS 版本）；
    - 打开终端执行标准全局安装：
@@ -202,6 +208,10 @@
 3. **恢复凭证与网络**：
    - 参考 [`.env.example`](./.env.example) 复制或填入本项目的真实凭证创建 `.env`；
    - 开启网络代理工具（首选开启 TUN 模式，免任何端口配置直接畅连）。
+4. **日常官方 Skills 更新 SOP**：
+   ```bash
+   git submodule update --remote --merge
+   ```
 
 ### 2. 在其他 AI 智能体（Codex / Claude Code / Cursor / Windsurf）中使用
 本项目具备天然的 **Agent-Agnostic（跨平台智能体通用性）**：
@@ -212,12 +222,12 @@
   - 本项目沉淀的全部 Skill 均基于**标准 CLI 与原生 Node.js / Python 脚本**，没有绑定 Antigravity 专有协议。
   - 任何拥有终端执行权限的 Agent（如 OpenAI Codex、Claude Code、Cursor 等）均可直接运行：
     ```bash
-    # 示例 1：查询全网热度榜 (Official)
-    node .agents/skills/official/crypto-market-rank/scripts/cli.mjs token-rank '{"rankType":10}'
+    # 示例 1：查询全网热度榜 (Official Web3)
+    node .agents/skills/binance-skills-hub/skills/binance-web3/crypto-market-rank/scripts/cli.mjs token-rank '{"rankType":10}'
     # 示例 2：查询链上钱包状态 (Official CLI)
     baw wallet status --json
-    # 示例 3：发布广场动态 (Official)
-    node .agents/skills/official/square-post/scripts/post-text.mjs "动态正文..."
+    # 示例 3：发布广场动态 (Official CEX)
+    node .agents/skills/binance-skills-hub/skills/binance/square-post/scripts/post-text.mjs "动态正文..."
     # 示例 4：运行自研广场挖矿工作流 (Custom)
     node .agents/skills/custom/square-mining/scripts/pipeline.mjs --dry-run
     ```
@@ -228,10 +238,14 @@
 
 ```text
 binance-agentic-nexus/ (本地目录: agitated-raman)
+├── .gitmodules                 # Git 子模块注册文件 (关联 binance-skills-hub)
 ├── .agents/
-│   ├── skills.json             # Antigravity 技能扫描路径声明（official / custom）
+│   ├── skills.json             # Antigravity 技能扫描路径声明（binance / binance-web3 / custom）
 │   └── skills/                 # 技能体系根目录
-│       ├── official/           # 19个 Binance 官方原生技能包
+│       ├── binance-skills-hub/ # 【Git Submodule】币安官方开源技能中心 (binance & binance-web3)
+│       │   └── skills/
+│       │       ├── binance/    # 7个 CEX、法币、支付、广场官方技能
+│       │       └── binance-web3/# 13个 Web3、钱包、聪明钱、跟单官方技能
 │       ├── custom/             # 本地自研与复合工作流技能包 (如 square-mining)
 │       └── README.md           # 技能分层索引与维护指南
 ├── scripts/

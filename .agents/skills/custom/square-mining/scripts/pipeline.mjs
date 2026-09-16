@@ -30,10 +30,10 @@ if (setGlobalDispatcher && ProxyAgent) {
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
-// 直接从工作区现有官方 Skill 中按需复用，杜绝重复实现
-import { COMMANDS as rankCommands, call as rankCall } from '../../../official/crypto-market-rank/scripts/cli.mjs';
-import { COMMANDS as signalCommands, call as signalCall } from '../../../official/trading-signal/scripts/cli.mjs';
-import { publish, printPublishSuccess, resolveApiKey } from '../../../official/square-post/scripts/lib.mjs';
+// 直接从工作区官方 binance-skills-hub 中按需复用，杜绝重复实现
+import { COMMANDS as rankCommands, call as rankCall } from '../../../binance-skills-hub/skills/binance-web3/crypto-market-rank/scripts/cli.mjs';
+import { COMMANDS as signalCommands, call as signalCall } from '../../../binance-skills-hub/skills/binance-web3/trading-signal/scripts/cli.mjs';
+import { publish, printPublishSuccess, resolveApiKey } from '../../../binance-skills-hub/skills/binance/square-post/scripts/lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
