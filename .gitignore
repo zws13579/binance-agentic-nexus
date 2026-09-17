@@ -71,3 +71,8 @@ $RECYCLE.BIN/
 !.vscode/settings.json
 *.sublime-workspace
 *.sublime-project
+
+# 7. Claude Code 与 AI 智能体本地私有配置
+.claude/*.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.json
