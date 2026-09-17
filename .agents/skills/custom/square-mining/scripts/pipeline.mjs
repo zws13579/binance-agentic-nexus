@@ -184,45 +184,23 @@ export function extractTrendingTopicsFromNews(newsList = []) {
 }
 
 // ==========================================
-// STEP 1: 广场热搜借势标签池 (Square Trends)
+// STEP 1: 全网顶级财经要闻与热点议题聚合
 // ==========================================
 export async function step1_fetchTrends() {
   console.log('----------------------------------------------------');
-  console.log('[Step 1] 正在抓取币安广场热搜榜单（用于正文末尾借势导流）...');
-  const url = 'https://www.binance.com/zh-CN/square/trends';
+  console.log('[Step 1] 正在聚合全网顶级财经要闻与热点议题（CNBC / Yahoo Finance / MarketWatch）...');
   let trends = [];
 
+  // 1. 核心源：从权威顶级金融媒体 (CNBC / Yahoo Finance / MarketWatch) 实时提炼宏观热点
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (res.ok) {
-      const html = await res.text();
-      const trendRegex = /#([^<]+)<\/span>[\s\S]*?([0-9,]+)\s*人讨论中/g;
-      let match;
-      let rank = 1;
-      while ((match = trendRegex.exec(html)) !== null) {
-        const rawTag = match[1].trim().replace(/\s+/g, '');
-        const count = parseInt(match[2].replace(/,/g, ''), 10);
-        trends.push({
-          rank: rank++,
-          hashtag: `#${rawTag}`,
-          topic: rawTag,
-          discussionCount: count,
-        });
-      }
-    }
+    const tradNews = await fetchTraditionalFinanceNews(12);
+    trends = extractTrendingTopicsFromNews(tradNews);
   } catch (err) {
-    // 降级由后续链路补充
+    console.warn('  [Notice] 传统财经要闻获取暂缓:', err.message);
   }
 
-  // 若网页直连未获取，联动官方社交热度榜 (social-hype)
-  if (trends.length === 0) {
+  // 2. 补充源：若数量不足，补充币安 Web3 链上社交情绪榜 (social-hype) 的代币热点
+  if (trends.length < 5) {
     try {
       const hypeData = await rankCall(rankCommands['social-hype']({
         chainId: '56',
@@ -231,29 +209,25 @@ export async function step1_fetchTrends() {
       }));
 
       const list = hypeData?.data?.leaderBoardList || [];
-      list.slice(0, 8).forEach((item, idx) => {
+      list.slice(0, 5).forEach((item) => {
         const brief = item.socialHypeInfo?.socialSummaryBriefTranslated || item.socialHypeInfo?.socialSummaryBrief || item.metaInfo?.symbol;
         const mainTopic = (brief.split('，')[0] || brief).replace(/\s+/g, '');
-        trends.push({
-          rank: idx + 1,
-          hashtag: `#${mainTopic}`,
-          topic: mainTopic,
-          discussionCount: item.socialHypeInfo?.socialHypeCn || item.socialHypeInfo?.socialHype || 10000,
-        });
+        if (mainTopic && !trends.some((t) => t.topic === mainTopic)) {
+          trends.push({
+            rank: trends.length + 1,
+            hashtag: `#${mainTopic}`,
+            topic: mainTopic,
+            discussionCount: item.socialHypeInfo?.socialHypeCn || item.socialHypeInfo?.socialHype || 10000,
+            source: 'Web3 链上热度',
+          });
+        }
       });
     } catch (e) {
-      // 容错降级
+      // 容错忽略
     }
   }
 
-  // 动态降级新规：若广场直连和社交榜未响应，彻底取消静态写死兜底，实时提取传统顶级金融媒体源为热点！
-  if (trends.length === 0) {
-    console.log('[Step 1 动态降级] 广场 trends 页面未直接响应，已按新规动态切换为【传统顶级金融媒体源】实时提取热点...');
-    const tradNews = await fetchTraditionalFinanceNews(12);
-    trends = extractTrendingTopicsFromNews(tradNews);
-  }
-
-  console.log(`[Step 1] 成功确认 ${trends.length} 个热搜借势标签:`);
+  console.log(`[Step 1] 成功确认 ${trends.length} 个真实财经与行业热点议题:`);
   trends.slice(0, 5).forEach((t) => {
     const src = t.source ? ` [来源: ${t.source}]` : '';
     console.log(`  Top ${t.rank}: ${t.hashtag} (${t.discussionCount} 讨论度)${src}`);
@@ -619,7 +593,7 @@ ${tag1} ${tag2}`;
   console.log(`  形态: ${type === 'short' ? '短动态 (contentType: 1)' : '文章 (contentType: 2)'}`);
   console.log(`  字数: ${sanitizedContent.length} 字符`);
   console.log(`  绑定币种(Cashtags <= 3): ${uniqueCashtags.join(', ')}`);
-  console.log(`  引用广场热榜: ${tag1}, ${tag2}`);
+  console.log(`  引用热点议题: ${tag1}, ${tag2}`);
 
   return {
     type,

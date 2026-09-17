@@ -28,8 +28,8 @@ flowchart LR
 
 1. **第一层：数据采集（只读稳健）**  
    运行 `pipeline.mjs --collect` 统一抓取：
-   - 官方 `crypto-market-rank` 社交热度榜（social-hype）与 Web3 聪明钱净流入榜（smart-money-inflow）；
-   - 币安广场实时热搜借势池（Square Trends）；若请求超时或防爬未返回，机制强制**动态降级至传统顶级金融媒体源（CNBC、Yahoo Finance、MarketWatch）实时提取最新财经热点**，彻底杜绝任何静态写死兜底数据；
+   - 传统顶级金融媒体源（CNBC、Yahoo Finance、MarketWatch）即时头条，动态提炼宏观与财经热点议题（彻底移除失效的网页端广场爬虫）；
+   - 官方 `crypto-market-rank` Web3 聪明钱净流入榜（smart-money-inflow）与链上代币热度榜（social-hype）；
    - CEX 现货价格、24h 涨跌幅与合约最新资金费率；
    - 传统权威财经与加密机构（The Block、CoinTelegraph）要闻。
 2. **第二层：AI 动态原创（大模型思考）**  
