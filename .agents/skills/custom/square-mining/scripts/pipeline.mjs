@@ -363,7 +363,7 @@ export async function step2_fetchMarketData(focusSymbols = ['BTC', 'ETH', 'LTC',
 // ==========================================
 export async function step3_fetchNews() {
   console.log('----------------------------------------------------');
-  console.log('[Step 3] 正在从传统顶级财经媒体 (CNBC, Yahoo Finance, MarketWatch) 与加密权威机构聚合实时要闻...');
+  console.log('[Step 3] 正在从传统顶级财经媒体 (CNBC, Yahoo Finance, MarketWatch) 与加密权威机构 (The Block, CoinTelegraph, CoinDesk) 聚合实时要闻...');
 
   // 1-3. 优先复用/抓取传统顶级财经媒体新闻
   const traditionalNews = await fetchTraditionalFinanceNews(10);
@@ -406,7 +406,8 @@ export async function step3_fetchNews() {
       const xml = await ctRes.text();
       const itemRegex = /<item>[\s\S]*?<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>[\s\S]*?<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>[\s\S]*?<\/item>/g;
       let m;
-      while ((m = itemRegex.exec(xml)) !== null && newsSummary.cryptoInstitutions.length < 8) {
+      const initialCount = newsSummary.cryptoInstitutions.length;
+      while ((m = itemRegex.exec(xml)) !== null && (newsSummary.cryptoInstitutions.length - initialCount) < 4) {
         if (!m[1].includes('Cointelegraph.com News')) {
           newsSummary.cryptoInstitutions.push({
             source: 'CoinTelegraph',
@@ -420,7 +421,30 @@ export async function step3_fetchNews() {
     // 降级保护
   }
 
-  // 6. 币安官方公告库 (100% 官方，新币与规则调整)
+  // 6. 加密权威标杆媒体：CoinDesk (政策监管、行业深度与独家信源)
+  try {
+    const cdRes = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss/', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (cdRes.ok) {
+      const xml = await cdRes.text();
+      const itemRegex = /<item>[\s\S]*?<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>[\s\S]*?<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>[\s\S]*?<\/item>/g;
+      let m;
+      const initialCount = newsSummary.cryptoInstitutions.length;
+      while ((m = itemRegex.exec(xml)) !== null && (newsSummary.cryptoInstitutions.length - initialCount) < 4) {
+        newsSummary.cryptoInstitutions.push({
+          source: 'CoinDesk',
+          title: cleanHtml(m[1]),
+          summary: cleanHtml(m[2]).slice(0, 180),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('  [Notice] CoinDesk 新闻源暂缓:', err.message);
+  }
+
+  // 7. 币安官方公告库 (100% 官方，新币与规则调整)
   try {
     const cmsRes = await fetch('https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageSize=5&pageNo=1', {
       headers: { lang: 'zh-CN' },
@@ -446,7 +470,7 @@ export async function step3_fetchNews() {
 
   console.log(`[Step 3] 权威财经与机构新闻聚合完成:`);
   console.log(`  传统金融源: ${newsSummary.traditionalFinance.length} 条 (CNBC / Yahoo Finance / MarketWatch)`);
-  console.log(`  加密机构源: ${newsSummary.cryptoInstitutions.length} 条 (The Block / CoinTelegraph)`);
+  console.log(`  加密机构源: ${newsSummary.cryptoInstitutions.length} 条 (The Block / CoinTelegraph / CoinDesk)`);
   if (newsSummary.traditionalFinance[0]) {
     console.log(`  [精选传统金融] [${newsSummary.traditionalFinance[0].source}] ${newsSummary.traditionalFinance[0].title}`);
   }

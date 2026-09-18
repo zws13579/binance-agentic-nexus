@@ -31,7 +31,7 @@ flowchart LR
    - 传统顶级金融媒体源（CNBC、Yahoo Finance、MarketWatch）即时头条，动态提炼宏观与财经热点议题（彻底移除失效的网页端广场爬虫）；
    - 官方 `crypto-market-rank` Web3 聪明钱净流入榜（smart-money-inflow）与链上代币热度榜（social-hype）；
    - CEX 现货价格、24h 涨跌幅与合约最新资金费率；
-   - 传统权威财经与加密机构（The Block、CoinTelegraph）要闻。
+   - 传统权威财经与加密头部机构（The Block、CoinTelegraph、CoinDesk）要闻。
 2. **第二层：AI 动态原创（大模型思考）**  
    由 Agent 读取采集到的客观事实与盘面数据，现场动态构思与撰写：
    - 严格遵循 [`copywriting_rules.md`](./references/copywriting_rules.md)；
