@@ -40,6 +40,24 @@ import { publish, printPublishSuccess, resolveApiKey } from '../../../binance-sk
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// 自动加载项目根目录 .env 到 process.env，确保 OpenAPI 密钥可用
+const rootEnvPath = path.resolve(__dirname, '../../../../../.env');
+const cwdEnvPath = path.resolve(process.cwd(), '.env');
+const actualEnvPath = fs.existsSync(rootEnvPath) ? rootEnvPath : cwdEnvPath;
+if (fs.existsSync(actualEnvPath)) {
+  const content = fs.readFileSync(actualEnvPath, 'utf8');
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx > 0) {
+      const k = trimmed.slice(0, eqIdx).trim();
+      const v = trimmed.slice(eqIdx + 1).trim();
+      if (!process.env[k]) process.env[k] = v;
+    }
+  }
+}
+
 // HTML 实体与标签清洗工具
 function cleanHtml(str = '') {
   return str
