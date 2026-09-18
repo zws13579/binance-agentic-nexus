@@ -560,14 +560,17 @@ export function step4_generatePost({ trends, marketData, news, type = 'short' })
   if (archetype === 'macro') {
     // 模型 A: 传统金融宏观与通胀联动
     const macroNews = news.traditionalFinance.find(n => /inflation|rate|fed|wall street/i.test(n.title)) || news.traditionalFinance[0];
-    const matchedTopic = trends.find(t => t.originalTitle === macroNews?.title)?.topic;
-    const newsMention = matchedTopic ? `各大机构都在紧盯“${matchedTopic}”` : (macroNews ? '美联储利率决议与宏观流动性动向持续发酵' : '近期美债与通胀预期反复扰动');
+    if (!macroNews) {
+      throw new Error('未获取到真实宏观财经新闻，拒绝无事实依据生成文案');
+    }
+    const matchedTopic = trends.find(t => t.originalTitle === macroNews.title)?.topic;
+    const newsMention = matchedTopic ? `各大机构都在紧盯“${matchedTopic}”` : `权威媒体头条要闻聚焦“${macroNews.title}”`;
 
     [tag1, tag2] = pickTags(trends, /加息|通胀|美联储|宏观|大饼|BTC/i, /以太坊|ETH|流动性|行情/i);
 
     const btcK = Math.round(btc.price / 1000);
     title = `宏观博弈进入深水区，大饼${btcK}K拉锯背后的筹码暗流`;
-    postContent = `最近看外媒财经要闻，${newsMention}，宏观流动性博弈的刀已经架在头上了。
+    postContent = `最近看外媒财经要闻，${newsMention}。
 
 大饼 $BTC 连续几天被按在 ${btcPriceStr} 附近来回锯齿震荡，日内振幅连1%都不到，很多人还在幻想着马上暴力拉升，纯属自欺欺人。流动性枯竭的阶段，每次脉冲冲高都是标准的诱多陷阱。
 
@@ -579,16 +582,20 @@ ${tag1} ${tag2}`;
 
   } else if (archetype === 'whale') {
     // 模型 B: 链上做市商与流动性猎杀
+    const whaleInflow = marketData.web3.smartMoneyInflows[0];
+    const whaleNews = allNewsItems.find(n => /whale|inflow|outflow|liquidat/i.test(n.title));
+    const whaleContext = whaleNews ? `媒体正在报道“${whaleNews.title}”` : (whaleInflow ? `链上聪明钱监控显示代币 $${whaleInflow.symbol} 出现单日大额异动` : `链上合约大额多空博弈白热化`);
+
     [tag1, tag2] = pickTags(trends, /巨鲸|大额|转账|做市|流动性/i, /持仓|爆仓|清算|筹码|衍生品/i);
 
-    title = `巨鲸大额现货归集，做市商这套流动性猎杀逻辑必须看懂`;
-    postContent = `这两天链上监控疯狂报警，做市巨鲸大额现货密集归集进交易所，广场上一堆人还在无脑喊多头牛回。
+    title = `链上大额异动频繁，做市商流动性猎杀逻辑拆解`;
+    postContent = `盘面数据不会说谎，${whaleContext}。
 
 做市商转币从来不是做慈善。以太坊 $ETH 挂在 ${ethPriceStr} 附近反复试探，大额现货搬砖配合期权对冲，核心目的就是把两头挂单密集的杠杆流动性吃干抹净。大饼 $BTC 在 ${btcPriceStr} 关键位附近缩量横盘，主力这种不温不火的拉升试盘，就是最典型的流动性围剿。
 
-很多人盯着单笔链上大额转账就无脑跟单，往往死得最惨。盘面不放量放度确认，所有的插针都是为了给大资金出货打掩护。
+很多人盯着单笔链上大额转账就无脑跟单，往往死得最惨。盘面不放量确认，所有的插针都是为了给大资金调仓打掩护。
 
-市场最残酷的真相就是：当你以为跟上巨鲸节奏的时候，你其实早就成了做市商算盘里的对手盘。
+市场最残酷的真相就是：当你以为跟上主力节奏的时候，你其实早就成了做市商算盘里的对手盘。
 
 ${tag1} ${tag2}`;
 
@@ -597,13 +604,15 @@ ${tag1} ${tag2}`;
     const isZec = /zcash|zec/i.test(combinedNewsText) || trends.some(t => t.topic.includes('Zcash'));
     const featuredSymbol = isZec ? '$ZEC' : '$DOGE';
     const featuredPrice = isZec ? Math.round(zec.price).toLocaleString() : doge.price;
+    const narrativeNews = allNewsItems.find(n => /etf|zcash|zec|doge|solana|upgrade/i.test(n.title));
+    const narrativeMention = narrativeNews ? `要闻聚焦“${narrativeNews.title}”` : `突发叙事与资金脉冲正在快速发酵`;
 
     [tag1, tag2] = pickTags(trends, /法案|储备|ETF|DOGE|Zcash/i, /监管|政策|清算|爆仓|社区/i);
 
     title = `老牌币种题材异动，狂欢背后谨防庄家拉高出货`;
-    postContent = `这两天老牌题材突然集体异动，${featuredSymbol} 成了全场焦点，报价剧烈波动在 ${featuredPrice} 附近。
+    postContent = `这两天老牌题材突然集体异动，${featuredSymbol} 成了全场焦点，报价剧烈波动在 ${featuredPrice} 附近，${narrativeMention}。
 
-不管是炒作算力暴涨还是意淫ETF审批落地，真相永远只有一个：存量博弈市场里，老币种借着突发叙事脉冲放量，从来都是潜伏主力借着流动性高潮在关门收割。
+不管是炒作算力暴涨还是意淫资金接盘，真相永远只有一个：存量博弈市场里，老币种借着突发叙事脉冲放量，从来都是潜伏主力借着流动性高潮在关门收割。
 
 大盘大饼 $BTC 还在 ${btcPriceStr} 附近震荡磨人，主流资产都没走出来，脱离基本面的山寨脉冲注定只有三分钟热度。
 
@@ -613,10 +622,13 @@ ${tag1} ${tag2}`;
 
   } else {
     // 模型 D: 安全漏洞与链上风控防钓鱼
+    const secNews = allNewsItems.find(n => /hack|stolen|drain|breach|security|sanction/i.test(n.title));
+    const secMention = secNews ? `权威机构披露“${secNews.title}”` : `链上风控与资产安全风险加剧`;
+
     [tag1, tag2] = pickTags(trends, /安全|风控|钓鱼|漏洞|泄露/i, /BTC|以太坊|大盘|热点/i);
 
     title = `链上安全事件频发，行情洗盘期如何守住钱包本金`;
-    postContent = `各大金融机构和平台数据泄露频发，黑客利用伪造官方邮件定向钓鱼的案子层出不穷。
+    postContent = `近期安全事件频发，${secMention}，黑客与欺诈定向收割的案子层出不穷。
 
 行情冷清、大饼 $BTC 在 ${btcPriceStr} 附近来回洗盘磨人的时候，往往就是散户警惕性最低的危险期。一堆人被震荡行情搞得心浮气躁，看到所谓的空投升级就随手签名授权，多年积累瞬间归零。
 
