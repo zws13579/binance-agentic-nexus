@@ -159,108 +159,27 @@ export async function fetchTraditionalFinanceNews(limit = 12) {
   return list;
 }
 
-// 从传统顶级金融媒体新闻中提炼真实热点话题 (100% 动态即时，彻底取消静态写死兜底)
-export function extractTrendingTopicsFromNews(newsList = []) {
-  const trends = [];
-  const seenTopics = new Set();
-
-  function parseTopic(title) {
-    const t = title.trim();
-    if (/fed.*(hike|rate|approv)|interest rate/i.test(t)) return '美联储加息25bp';
-    if (/clarity act|clarity vote/i.test(t)) return 'CLARITY法案遇阻';
-    if (/bitcoin reserve|strategic.*bitcoin/i.test(t)) return '美众院推进比特币战略储备';
-    if (/bitcoin.*(76k|77k|78k|80,?000|strength|reclaim|rises|winning)/i.test(t)) return '大饼78K关口争夺';
-    if (/ethereum.*(2,?400|2,?500|falls|price|prediction|upgrade)/i.test(t)) return '以太坊2500关口博弈';
-    if (/solana.*(97|94|100|106|block|speed|slot)/i.test(t)) return 'Solana网络提速升级';
-    if (/tokenized.*(stock|u\.s\.|share|rwa)|securitize/i.test(t)) return '美股代币化合规';
-    if (/jpmorgan|gold.*(bitcoin|etf)|etf.*(hedg|inflow)/i.test(t)) return '摩根大通看多比特币';
-    if (/zcash|zec.*(halving|block|1,?400|1,?500)/i.test(t)) return 'Zcash主网升级与减半';
-    if (/sanction|iran|strait of hormuz/i.test(t)) return '加密制裁与合规风控';
-    if (/inflation|paycheck|wage growth/i.test(t)) return '美国通胀预期升温';
-    if (/stablecoin|visa.*blockchain|dtcpay/i.test(t)) return '机构布局稳定币支付';
-    if (/cyberattack|hack|stolen|drain/i.test(t)) return '加密平台安全风控警示';
-    if (/perps|futures|cftc/i.test(t)) return '衍生品监管与合规突破';
-    if (/ai.*(revenue|model|cloud|pivot|compute)/i.test(t)) return 'AI算力与商业化博弈';
-
-    const words = t
-      .replace(/[^a-zA-Z0-9一-龥\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w && !['a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'is', 'as', 'after', 'with', 'says', 'here', 'are', 'what'].includes(w.toLowerCase()))
-      .slice(0, 4);
-    const tag = words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
-    return tag.length >= 3 ? tag.slice(0, 20) : null;
-  }
-
-  for (const item of newsList) {
-    const topic = parseTopic(item.title);
-    if (topic && !seenTopics.has(topic)) {
-      seenTopics.add(topic);
-      trends.push({
-        rank: trends.length + 1,
-        hashtag: `#${topic}`,
-        topic,
-        discussionCount: Math.max(50000, 200000 - trends.length * 25000),
-        source: item.source,
-        originalTitle: item.title,
-      });
-      if (trends.length >= 8) break;
-    }
-  }
-
-  return trends;
-}
-
 // ==========================================
-// STEP 1: 全网顶级财经要闻与热点议题聚合
+// STEP 1: 全网权威财经即时要闻调取
+// 直接提供一手头条与摘要，交由 AI Agent 实时理解与提炼，绝不硬编码预制词库
 // ==========================================
 export async function step1_fetchTrends() {
   console.log('----------------------------------------------------');
-  console.log('[Step 1] 正在聚合全网顶级财经要闻与热点议题（CNBC / Yahoo Finance / MarketWatch）...');
-  let trends = [];
+  console.log('[Step 1] 正在调取全网权威财经即时要闻（CNBC / Yahoo Finance / MarketWatch）...');
+  let newsList = [];
 
-  // 1. 核心源：从权威顶级金融媒体 (CNBC / Yahoo Finance / MarketWatch) 实时提炼宏观热点
   try {
-    const tradNews = await fetchTraditionalFinanceNews(12);
-    trends = extractTrendingTopicsFromNews(tradNews);
+    newsList = await fetchTraditionalFinanceNews(10);
   } catch (err) {
     console.warn('  [Notice] 传统财经要闻获取暂缓:', err.message);
   }
 
-  // 2. 补充源：若数量不足，补充币安 Web3 链上社交情绪榜 (social-hype) 的代币热点
-  if (trends.length < 5) {
-    try {
-      const hypeData = await rankCall(rankCommands['social-hype']({
-        chainId: '56',
-        targetLanguage: 'zh-CN',
-        timeRange: 1,
-      }));
-
-      const list = hypeData?.data?.leaderBoardList || [];
-      list.slice(0, 5).forEach((item) => {
-        const brief = item.socialHypeInfo?.socialSummaryBriefTranslated || item.socialHypeInfo?.socialSummaryBrief || item.metaInfo?.symbol;
-        const mainTopic = (brief.split('，')[0] || brief).replace(/\s+/g, '');
-        if (mainTopic && !trends.some((t) => t.topic === mainTopic)) {
-          trends.push({
-            rank: trends.length + 1,
-            hashtag: `#${mainTopic}`,
-            topic: mainTopic,
-            discussionCount: item.socialHypeInfo?.socialHypeCn || item.socialHypeInfo?.socialHype || 10000,
-            source: 'Web3 链上热度',
-          });
-        }
-      });
-    } catch (e) {
-      // 容错忽略
-    }
-  }
-
-  console.log(`[Step 1] 成功确认 ${trends.length} 个真实财经与行业热点议题:`);
-  trends.slice(0, 5).forEach((t) => {
-    const src = t.source ? ` [来源: ${t.source}]` : '';
-    console.log(`  Top ${t.rank}: ${t.hashtag} (${t.discussionCount} 讨论度)${src}`);
+  console.log(`[Step 1] 成功获取 ${newsList.length} 条即时权威头条:`);
+  newsList.slice(0, 5).forEach((item, idx) => {
+    console.log(`  Top ${idx + 1}: [${item.source}] ${item.title}`);
   });
 
-  return trends;
+  return newsList;
 }
 
 // ==========================================
