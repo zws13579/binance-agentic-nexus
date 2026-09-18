@@ -491,214 +491,57 @@ export async function step3_fetchNews() {
 }
 
 // ==========================================
-// STEP 4: 选题加权与多模态去AI味动态创作引擎 (Anti-Shadowban Engine)
+// 推流发布模块 (Content Publisher)
+// 接收由 AI Agent 现场实时生成的原创文案，执行格式校验并推流到广场 OpenAPI
 // ==========================================
-export function step4_generatePost({ trends, marketData, news, type = 'short' }) {
+export async function step5_publishPost(post, { dryRun = false } = {}) {
   console.log('----------------------------------------------------');
-  console.log(`[Step 4] 正在根据实时新闻热点与盘面特征进行主题决策...`);
+  console.log(`[Publish] ${dryRun ? '【试运行预览 DRY-RUN】' : '【正在发布到币安广场】'}...`);
 
-  // 汇聚全部新闻文本做特征分析
-  const allNewsItems = [...(news.traditionalFinance || []), ...(news.cryptoInstitutions || [])];
-  const combinedNewsText = allNewsItems.map(n => `${n.title} ${n.summary}`).join(' ').toLowerCase();
+  const bodyText = (post.bodyTextOnly || '').trim();
 
-  // 1. 计算 4 种主题模型的热点匹配权重
-  let scoreMacro = 0;       // 宏观与通胀美联储联动
-  let scoreWhale = 0;       // 做市商与巨鲸筹码博弈
-  let scoreNarrative = 0;   // 叙事突发、ETF与老币异动
-  let scoreSecurity = 0;    // 安全泄露与风控避险
-
-  if (/inflation|cpi|interest rate|fed|federal reserve|housing|jobs|paycheck|debasement|wall street|macro/.test(combinedNewsText)) scoreMacro += 3;
-  if (/whale|wintermute|inflow|outflow|liquidat|dump|accumulat|orderbook/.test(combinedNewsText)) scoreWhale += 3;
-  if (/etf|bitwise|grayscale|zcash|zec|doge|solana|xrp|sec|mining|hashrate/.test(combinedNewsText)) scoreNarrative += 3;
-  if (/leak|breach|revolut|phish|hack|drain|stolen|scam|warning/.test(combinedNewsText)) scoreSecurity += 3;
-
-  // 结合广场与财经 Trends 热度微调
-  const trendsText = trends.map(t => t.topic).join(' ');
-  if (/加息|利率|通胀|美联储|宏观|华尔街/.test(trendsText)) scoreMacro += 2;
-  if (/巨鲸|做市|转账|资金|流动性|爆仓|清算/.test(trendsText)) scoreWhale += 2;
-  if (/法案|储备|ETF|叙事|算力|挖矿|生态|打新/.test(trendsText)) scoreNarrative += 2;
-  if (/安全|风控|漏洞|泄露|黑客|防钓鱼/.test(trendsText)) scoreSecurity += 2;
-
-  // 确定获胜主题模型
-  let archetype = 'macro';
-  const scores = [
-    { name: 'macro', score: scoreMacro },
-    { name: 'whale', score: scoreWhale },
-    { name: 'narrative', score: scoreNarrative },
-    { name: 'security', score: scoreSecurity },
-  ];
-  scores.sort((a, b) => b.score - a.score);
-  archetype = scores[0].score > 0 ? scores[0].name : 'macro';
-
-  console.log(`[Step 4] 选题决策中心结果: 锁定【${archetype.toUpperCase()}】模型 (Macro:${scoreMacro}, Whale:${scoreWhale}, Narrative:${scoreNarrative}, Security:${scoreSecurity})`);
-
-  // 提取核心盘面价格
-  const btc = marketData.cex.tickers['BTC'] || { price: 76700, changePercent24h: -0.8 };
-  const eth = marketData.cex.tickers['ETH'] || { price: 2475, changePercent24h: -2.3 };
-  const zec = marketData.cex.tickers['ZEC'] || { price: 1085, changePercent24h: -6.0 };
-  const doge = marketData.cex.tickers['DOGE'] || { price: 0.083, changePercent24h: -2.1 };
-  const ltc = marketData.cex.tickers['LTC'] || { price: 53.5, changePercent24h: -0.8 };
-
-  const btcPriceStr = Math.round(btc.price).toLocaleString();
-  const ethPriceStr = Math.round(eth.price).toLocaleString();
-  const ethFr = marketData.cex.fundingRates['ETH']?.fundingRate || '-0.002%';
-
-  // 辅助函数：选取两个不重复的广场借势标签
-  function pickTags(trendsList, regex1, regex2) {
-    const t1 = trendsList.find(t => regex1.test(t.topic))?.hashtag || trendsList[0]?.hashtag || '#加密市场热点';
-    const t2 = trendsList.find(t => regex2.test(t.topic) && t.hashtag !== t1)?.hashtag ||
-               trendsList.find(t => t.hashtag !== t1)?.hashtag ||
-               '#币安广场';
-    return [t1, t2];
+  // 1. 严格合规校验：零 Markdown 格式检查
+  if (/\*\*|#+\s+|[-*]\s+/.test(bodyText)) {
+    console.warn('  [警告] 检测到潜在 Markdown 语法符号，正在自动过滤清洗...');
   }
-
-  let tag1, tag2;
-  let postContent = '';
-  let title = '';
-
-  // 2. 根据选中的主题模型，采用完全不同的开篇、结构与论述方式（彻底消除同质化指纹）
-  if (archetype === 'macro') {
-    // 模型 A: 传统金融宏观与通胀联动
-    const macroNews = news.traditionalFinance.find(n => /inflation|rate|fed|wall street/i.test(n.title)) || news.traditionalFinance[0];
-    if (!macroNews) {
-      throw new Error('未获取到真实宏观财经新闻，拒绝无事实依据生成文案');
-    }
-    const matchedTopic = trends.find(t => t.originalTitle === macroNews.title)?.topic;
-    const newsMention = matchedTopic ? `各大机构都在紧盯“${matchedTopic}”` : `权威媒体头条要闻聚焦“${macroNews.title}”`;
-
-    [tag1, tag2] = pickTags(trends, /加息|通胀|美联储|宏观|大饼|BTC/i, /以太坊|ETH|流动性|行情/i);
-
-    const btcK = Math.round(btc.price / 1000);
-    title = `宏观博弈进入深水区，大饼${btcK}K拉锯背后的筹码暗流`;
-    postContent = `最近看外媒财经要闻，${newsMention}。
-
-大饼 $BTC 连续几天被按在 ${btcPriceStr} 附近来回锯齿震荡，日内振幅连1%都不到，很多人还在幻想着马上暴力拉升，纯属自欺欺人。流动性枯竭的阶段，每次脉冲冲高都是标准的诱多陷阱。
-
-以太坊 $ETH 更是弱得毫无悬念，在 ${ethPriceStr} 附近持续承压，合约资金费率持续在 ${ethFr} 低位徘徊。在宏观利率拐点明朗之前，机构大钱根本不可能在这种位置进场当接盘侠。
-
-大盘要死不活的时候，与其在高位杠杆里给做市商送手续费，不如承认现实：大方向没走出来之前，管住手才是最大的利润。
-
-${tag1} ${tag2}`;
-
-  } else if (archetype === 'whale') {
-    // 模型 B: 链上做市商与流动性猎杀
-    const whaleInflow = marketData.web3.smartMoneyInflows[0];
-    const whaleNews = allNewsItems.find(n => /whale|inflow|outflow|liquidat/i.test(n.title));
-    const whaleContext = whaleNews ? `媒体正在报道“${whaleNews.title}”` : (whaleInflow ? `链上聪明钱监控显示代币 $${whaleInflow.symbol} 出现单日大额异动` : `链上合约大额多空博弈白热化`);
-
-    [tag1, tag2] = pickTags(trends, /巨鲸|大额|转账|做市|流动性/i, /持仓|爆仓|清算|筹码|衍生品/i);
-
-    title = `链上大额异动频繁，做市商流动性猎杀逻辑拆解`;
-    postContent = `盘面数据不会说谎，${whaleContext}。
-
-做市商转币从来不是做慈善。以太坊 $ETH 挂在 ${ethPriceStr} 附近反复试探，大额现货搬砖配合期权对冲，核心目的就是把两头挂单密集的杠杆流动性吃干抹净。大饼 $BTC 在 ${btcPriceStr} 关键位附近缩量横盘，主力这种不温不火的拉升试盘，就是最典型的流动性围剿。
-
-很多人盯着单笔链上大额转账就无脑跟单，往往死得最惨。盘面不放量确认，所有的插针都是为了给大资金调仓打掩护。
-
-市场最残酷的真相就是：当你以为跟上主力节奏的时候，你其实早就成了做市商算盘里的对手盘。
-
-${tag1} ${tag2}`;
-
-  } else if (archetype === 'narrative') {
-    // 模型 C: 叙事突发、ETF落地与老币异动 (ZEC / DOGE / LTC)
-    const isZec = /zcash|zec/i.test(combinedNewsText) || trends.some(t => t.topic.includes('Zcash'));
-    const featuredSymbol = isZec ? '$ZEC' : '$DOGE';
-    const featuredPrice = isZec ? Math.round(zec.price).toLocaleString() : doge.price;
-    const narrativeNews = allNewsItems.find(n => /etf|zcash|zec|doge|solana|upgrade/i.test(n.title));
-    const narrativeMention = narrativeNews ? `要闻聚焦“${narrativeNews.title}”` : `突发叙事与资金脉冲正在快速发酵`;
-
-    [tag1, tag2] = pickTags(trends, /法案|储备|ETF|DOGE|Zcash/i, /监管|政策|清算|爆仓|社区/i);
-
-    title = `老牌币种题材异动，狂欢背后谨防庄家拉高出货`;
-    postContent = `这两天老牌题材突然集体异动，${featuredSymbol} 成了全场焦点，报价剧烈波动在 ${featuredPrice} 附近，${narrativeMention}。
-
-不管是炒作算力暴涨还是意淫资金接盘，真相永远只有一个：存量博弈市场里，老币种借着突发叙事脉冲放量，从来都是潜伏主力借着流动性高潮在关门收割。
-
-大盘大饼 $BTC 还在 ${btcPriceStr} 附近震荡磨人，主流资产都没走出来，脱离基本面的山寨脉冲注定只有三分钟热度。
-
-把题材当信仰的人，最后都会被挂在树顶上站岗。看不懂筹码出货逻辑的，迟早要把本金全吐回去。
-
-${tag1} ${tag2}`;
-
-  } else {
-    // 模型 D: 安全漏洞与链上风控防钓鱼
-    const secNews = allNewsItems.find(n => /hack|stolen|drain|breach|security|sanction/i.test(n.title));
-    const secMention = secNews ? `权威机构披露“${secNews.title}”` : `链上风控与资产安全风险加剧`;
-
-    [tag1, tag2] = pickTags(trends, /安全|风控|钓鱼|漏洞|泄露/i, /BTC|以太坊|大盘|热点/i);
-
-    title = `链上安全事件频发，行情洗盘期如何守住钱包本金`;
-    postContent = `近期安全事件频发，${secMention}，黑客与欺诈定向收割的案子层出不穷。
-
-行情冷清、大饼 $BTC 在 ${btcPriceStr} 附近来回洗盘磨人的时候，往往就是散户警惕性最低的危险期。一堆人被震荡行情搞得心浮气躁，看到所谓的空投升级就随手签名授权，多年积累瞬间归零。
-
-在币圈活下去的第一铁律：赚钱看大势，亏光往往只需要一次随意授权。
-
-连自己钱包私钥和授权都管不好的，就算大牛市真的来了，也逃不过被洗劫一空的下场。
-
-${tag1} ${tag2}`;
-  }
-
-  // 严格自检过滤：彻底去除任何 Markdown 语法符号
-  const sanitizedContent = postContent
+  const sanitizedContent = bodyText
     .replace(/\*\*/g, '')
     .replace(/^#+\s+/gm, '')
     .replace(/^[-*]\s+/gm, '')
     .trim();
 
-  // 检查 Cashtags 数量（严格 <= 3）
+  // 2. 严格合规校验：Cashtags 数量（平台硬限制 <= 3）
   const cashtags = [...sanitizedContent.matchAll(/\$([A-Za-z0-9]+)/g)].map(m => `$${m[1].toUpperCase()}`);
   const uniqueCashtags = [...new Set(cashtags)];
   if (uniqueCashtags.length > 3) {
-    throw new Error(`Cashtags exceed limit 3: ${uniqueCashtags.join(', ')}`);
+    throw new Error(`Cashtags 数量超过平台限制 (最多3个): ${uniqueCashtags.join(', ')}`);
   }
-
-  console.log(`[Step 4] 内容生成成功！`);
-  console.log(`  采用模型: ${archetype}`);
-  console.log(`  形态: ${type === 'short' ? '短动态 (contentType: 1)' : '文章 (contentType: 2)'}`);
-  console.log(`  字数: ${sanitizedContent.length} 字符`);
-  console.log(`  绑定币种(Cashtags <= 3): ${uniqueCashtags.join(', ')}`);
-  console.log(`  引用热点议题: ${tag1}, ${tag2}`);
-
-  return {
-    type,
-    contentType: type === 'short' ? 1 : 2,
-    title: type === 'short' ? null : title,
-    bodyTextOnly: sanitizedContent,
-    cashtags: uniqueCashtags,
-    hashtags: [tag1, tag2],
-    archetype,
-  };
-}
-
-// ==========================================
-// STEP 5: 官方 Skill 上传发帖模块
-// ==========================================
-export async function step5_publishPost(post, { dryRun = false } = {}) {
-  console.log('----------------------------------------------------');
-  console.log(`[Step 5] ${dryRun ? '【试运行预览 DRY-RUN】' : '【正在发布到币安广场】'}...`);
 
   console.log('\n================ 生成的内容预览 (真实发帖效果) ================');
   if (post.title) {
     console.log(`【标题】${post.title}\n`);
   }
-  console.log(post.bodyTextOnly);
+  console.log(sanitizedContent);
   console.log('===============================================================\n');
 
   if (dryRun) {
     console.log('[DRY-RUN] 当前为试运行模式，未实际上传至币安广场。');
-    console.log('[DRY-RUN] 若文案与数据符合预期，请添加 --publish 参数执行全自动发布。');
+    console.log('[DRY-RUN] 若文案与数据符合预期，请添加 --publish 参数执行实际发布。');
     return {
       success: true,
       dryRun: true,
-      preview: post,
+      preview: {
+        ...post,
+        bodyTextOnly: sanitizedContent,
+        cashtags: uniqueCashtags,
+      },
     };
   }
 
   const apiKey = resolveApiKey();
   const payload = {
     contentType: post.contentType,
-    bodyTextOnly: post.bodyTextOnly,
+    bodyTextOnly: sanitizedContent,
   };
   if (post.title) {
     payload.title = post.title;
@@ -716,6 +559,8 @@ export async function step5_publishPost(post, { dryRun = false } = {}) {
   };
 }
 
+export const publishPost = step5_publishPost;
+
 // ==========================================
 // 统一数据采集导出 (Data Collection Only)
 // ==========================================
@@ -731,7 +576,7 @@ export async function collectData() {
 // ==========================================
 export async function runPipeline({ dryRun = true, type = 'short', text = null, title = null, file = null } = {}) {
   try {
-    // 模式 1: 直接传入外部文案或文件进行推流（AI Agent 原创模式，0 代码改动）
+    // 模式 1: 传入文案或文件进行推流发布（AI Agent 原创模式）
     if (text || file) {
       let content = text;
       if (file) {
@@ -745,26 +590,21 @@ export async function runPipeline({ dryRun = true, type = 'short', text = null, 
         contentType,
         title: title || (contentType === 2 ? '币安广场市场深度复盘' : null),
         bodyTextOnly: content,
-        archetype: 'dynamic_ai',
+        archetype: 'agent_realtime',
       };
 
       return await step5_publishPost(post, { dryRun });
     }
 
-    // 模式 2: 完整五步全自动流水线（纯 CLI / 定时任务兜底）
+    // 模式 2: 未传文案时执行数据采集，提示 AI Agent 现场实时生成
     console.log('\n======================================================');
-    console.log('   🚀 币安广场【内容挖矿】端到端全自动工作流启动');
-    console.log(`   模式: ${dryRun ? 'DRY-RUN (试运行预览)' : 'LIVE-PUBLISH (实际发布)'} | 格式: ${type}`);
+    console.log('   🚀 币安广场【内容挖矿】数据采集启动');
+    console.log('   💡 本项目为 Agentic 架构：文章由 AI Agent 结合实时数据即时创作，杜绝预制套路话术');
     console.log('======================================================\n');
 
-    const trends = await step1_fetchTrends();
-    const marketData = await step2_fetchMarketData();
-    const news = await step3_fetchNews();
-    const post = step4_generatePost({ trends, marketData, news, type });
-    const publishResult = await step5_publishPost(post, { dryRun });
-
-    console.log('\n✨ 工作流五步全流程执行完毕！');
-    return publishResult;
+    const collected = await collectData();
+    console.log('\n✨ 数据采集完毕！请由 AI Agent 结合上述真实盘面与要闻实时原创撰写，并通过 --publish-text 或 --file 传入发布。');
+    return collected;
   } catch (err) {
     console.error('\n❌ 工作流执行中断:', err.message);
     if (process.env.DEBUG) console.error(err.stack);
