@@ -52,7 +52,10 @@ if (fs.existsSync(actualEnvPath)) {
     const eqIdx = trimmed.indexOf('=');
     if (eqIdx > 0) {
       const k = trimmed.slice(0, eqIdx).trim();
-      const v = trimmed.slice(eqIdx + 1).trim();
+      let v = trimmed.slice(eqIdx + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
       if (!process.env[k]) process.env[k] = v;
     }
   }
@@ -63,12 +66,14 @@ function cleanHtml(str = '') {
   return str
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
     .replace(/<[^>]+>/g, '')
-    .replace(/&apos;|&#x2019;|&#x27;|&rsquo;/g, "'")
-    .replace(/&quot;|&#x201c;|&#x201d;|&ldquo;|&rdquo;/g, '"')
-    .replace(/&#x2014;|&mdash;/g, '—')
+    .replace(/&apos;|&#x2018;|&#x2019;|&#8216;|&#8217;|&#x27;|&#39;|&lsquo;|&rsquo;/g, "'")
+    .replace(/&quot;|&#x201c;|&#x201d;|&#8220;|&#8221;|&ldquo;|&rdquo;/g, '"')
+    .replace(/&#x2014;|&#8212;|&mdash;|&ndash;/g, '—')
+    .replace(/&hellip;|&#8230;/g, '...')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -164,14 +169,18 @@ export function extractTrendingTopicsFromNews(newsList = []) {
     if (/fed.*(hike|rate|approv)|interest rate/i.test(t)) return '美联储加息25bp';
     if (/clarity act|clarity vote/i.test(t)) return 'CLARITY法案遇阻';
     if (/bitcoin reserve|strategic.*bitcoin/i.test(t)) return '美众院推进比特币战略储备';
-    if (/bitcoin.*(76k|80,?000|strength|reclaim|rises|winning)/i.test(t)) return '大饼76K防线争夺';
-    if (/ethereum.*(2,?400|falls|price|prediction)/i.test(t)) return '以太坊2400关口承压';
-    if (/solana.*(97|94|drops)/i.test(t)) return 'SOL测试97支撑';
+    if (/bitcoin.*(76k|77k|78k|80,?000|strength|reclaim|rises|winning)/i.test(t)) return '大饼78K关口争夺';
+    if (/ethereum.*(2,?400|2,?500|falls|price|prediction|upgrade)/i.test(t)) return '以太坊2500关口博弈';
+    if (/solana.*(97|94|100|106|block|speed|slot)/i.test(t)) return 'Solana网络提速升级';
+    if (/tokenized.*(stock|u\.s\.|share|rwa)|securitize/i.test(t)) return '美股代币化合规';
+    if (/jpmorgan|gold.*(bitcoin|etf)|etf.*(hedg|inflow)/i.test(t)) return '摩根大通看多比特币';
+    if (/zcash|zec.*(halving|block|1,?400|1,?500)/i.test(t)) return 'Zcash主网升级与减半';
+    if (/sanction|iran|strait of hormuz/i.test(t)) return '加密制裁与合规风控';
     if (/inflation|paycheck|wage growth/i.test(t)) return '美国通胀预期升温';
-    if (/stablecoin|visa.*blockchain/i.test(t)) return 'Visa布局稳定币支付';
+    if (/stablecoin|visa.*blockchain|dtcpay/i.test(t)) return '机构布局稳定币支付';
     if (/cyberattack|hack|stolen|drain/i.test(t)) return '加密平台安全风控警示';
     if (/perps|futures|cftc/i.test(t)) return '衍生品监管与合规突破';
-    if (/ai.*(revenue|model|cloud)/i.test(t)) return 'AI算力与商业化博弈';
+    if (/ai.*(revenue|model|cloud|pivot|compute)/i.test(t)) return 'AI算力与商业化博弈';
 
     const words = t
       .replace(/[^a-zA-Z0-9一-龥\s]/g, ' ')
@@ -551,12 +560,14 @@ export function step4_generatePost({ trends, marketData, news, type = 'short' })
   if (archetype === 'macro') {
     // 模型 A: 传统金融宏观与通胀联动
     const macroNews = news.traditionalFinance.find(n => /inflation|rate|fed|wall street/i.test(n.title)) || news.traditionalFinance[0];
-    const newsMention = macroNews ? `各大机构都在紧盯“${macroNews.title.slice(0, 45)}...”` : '近期美债与通胀预期反复扰动';
+    const matchedTopic = trends.find(t => t.originalTitle === macroNews?.title)?.topic;
+    const newsMention = matchedTopic ? `各大机构都在紧盯“${matchedTopic}”` : (macroNews ? '美联储利率决议与宏观流动性动向持续发酵' : '近期美债与通胀预期反复扰动');
 
     [tag1, tag2] = pickTags(trends, /加息|通胀|美联储|宏观|大饼|BTC/i, /以太坊|ETH|流动性|行情/i);
 
-    title = `美股通胀预期升温，大饼76K拉锯背后的宏观暗流`;
-    postContent = `最近看外媒财经要闻，${newsMention}，宏观流动性收紧的刀已经架在头上了。
+    const btcK = Math.round(btc.price / 1000);
+    title = `宏观博弈进入深水区，大饼${btcK}K拉锯背后的筹码暗流`;
+    postContent = `最近看外媒财经要闻，${newsMention}，宏观流动性博弈的刀已经架在头上了。
 
 大饼 $BTC 连续几天被按在 ${btcPriceStr} 附近来回锯齿震荡，日内振幅连1%都不到，很多人还在幻想着马上暴力拉升，纯属自欺欺人。流动性枯竭的阶段，每次脉冲冲高都是标准的诱多陷阱。
 
