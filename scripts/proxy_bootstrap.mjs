@@ -23,10 +23,12 @@ try {
 
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || 'http://127.0.0.1:7890';
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 
-try {
-  setGlobalDispatcher(new ProxyAgent(proxyUrl));
-} catch (e) {
-  console.error('Failed to set ProxyAgent:', e);
+if (proxyUrl && setGlobalDispatcher && ProxyAgent) {
+  try {
+    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  } catch (e) {
+    console.error('Failed to set ProxyAgent:', e);
+  }
 }

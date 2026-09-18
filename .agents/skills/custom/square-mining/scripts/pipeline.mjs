@@ -22,8 +22,8 @@ try {
     ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
   } catch {}
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || 'http://127.0.0.1:7890';
-  if (setGlobalDispatcher && ProxyAgent) {
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+  if (proxyUrl && setGlobalDispatcher && ProxyAgent) {
     try { setGlobalDispatcher(new ProxyAgent(proxyUrl)); } catch {}
   }
 }
