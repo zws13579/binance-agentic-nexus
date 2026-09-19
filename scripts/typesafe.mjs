@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * TypeSafe AI (System One) 原生客户端与 CLI
+ * TypeSafe AI (System One) 原生执行引擎与通用客户端
  * 纯原生 Node.js 实现，零外部依赖，完全由 .env 驱动
- * 支持第三方 API 中转站或反向代理自定义端点
+ * 支持传入任意动态构建的 state 与 questions 结构化判定请求
  */
 import './proxy_bootstrap.mjs';
 import fs from 'fs';
@@ -35,14 +35,10 @@ function loadEnv() {
 
 const env = loadEnv();
 
-// 获取端点、Key 与模型配置（优先读取环境变量，其次读取 .env，最后使用官方默认值）
+// 获取端点、Key 与模型配置
 export function getConfig() {
   const apiKey = process.env.TYPESAFE_API_KEY || env.TYPESAFE_API_KEY || '';
   
-  // 自定义端点支持：
-  // 1. 若配置 TYPESAFE_ENDPOINT，直接使用完整端点
-  // 2. 若配置 TYPESAFE_BASE_URL，自动补充 /systemone
-  // 3. 默认官方端点 https://api.typesafe.ai/v1/systemone
   let endpoint = process.env.TYPESAFE_ENDPOINT || env.TYPESAFE_ENDPOINT;
   if (!endpoint) {
     const baseUrl = process.env.TYPESAFE_BASE_URL || env.TYPESAFE_BASE_URL;
@@ -59,17 +55,25 @@ export function getConfig() {
 }
 
 /**
- * 核心调用函数：向 TypeSafe 或第三方端点发送 System One 评估请求
+ * 核心执行函数：向端点发送动态构建的 System One 结构化判定请求
  * @param {Object} params
- * @param {string|Object|Array} params.state 待评估的状态/文本/数据
- * @param {Object} params.questions 评估问题定义 (noul / choice / score)
- * @param {string} [params.model] 模型名称 (可选，默认读取配置)
+ * @param {string|Object|Array} params.state Agent 针对具体情境提炼的现场事实与上下文
+ * @param {Object} params.questions Agent 动态设计的判定问题 (支持 noul / choice / score)
+ * @param {string} [params.model] 模型名称 (可选)
  */
 export async function evaluateSystemOne({ state, questions, model: overrideModel } = {}) {
   const { apiKey, endpoint, model: configModel } = getConfig();
 
   if (!apiKey) {
     throw new Error('未检测到 TYPESAFE_API_KEY，请在 .env 文件中配置 TYPESAFE_API_KEY=xxx');
+  }
+
+  if (!state) {
+    throw new Error('缺少评估状态 (state)，请提供待评估的上下文数据');
+  }
+
+  if (!questions || Object.keys(questions).length === 0) {
+    throw new Error('缺少判定问题 (questions)，请根据业务场景定义具体的判定项');
   }
 
   const payload = {
@@ -96,7 +100,7 @@ export async function evaluateSystemOne({ state, questions, model: overrideModel
 }
 
 // -------------------------------------------------------------
-// CLI 交互逻辑
+// CLI 调度逻辑：支持参数传递、文件输入及管道输入
 // -------------------------------------------------------------
 const args = process.argv.slice(2);
 
@@ -110,25 +114,30 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     const { endpoint, model, apiKey } = getConfig();
     const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : '(未设置)';
     console.log(`
-TypeSafe AI (System One) 原生客户端 CLI
-======================================
-当前配置状态:
+TypeSafe AI (System One) 原生执行引擎
+====================================
+当前环境状态:
   端点 (Endpoint):  ${endpoint}
-  模型 (Model):     ${model}
+  默认模型 (Model): ${model}
   API Key:          ${maskedKey}
 
-用法:
-  1. 连通性测试 (自检):
+核心定位:
+  本脚本是通用的执行引擎，不设死任何业务模板。
+  AI Agent 应根据当前实时行情、订单簿深度、推文或聪明钱交易现场，
+  自主思考并动态构建具体的 state 与 questions，然后调用本引擎获取客观判定。
+
+支持的输入方式:
+  1. 动态 JSON 字符串:
+     node scripts/typesafe.mjs --json '{"state": {...}, "questions": {...}}'
+
+  2. 动态 JSON 临时文件 (推荐复杂多维度场景，避免终端引号转义):
+     node scripts/typesafe.mjs --file /path/to/dynamic_payload.json
+
+  3. 标准输入 (stdin):
+     cat payload.json | node scripts/typesafe.mjs --stdin
+
+  4. 连通性测试 (自检):
      node scripts/typesafe.mjs test
-
-  2. 极简是非题 (Noul):
-     node scripts/typesafe.mjs --state "比特币放量突破70000美元大关" --noul "Is this a bullish breakout?"
-
-  3. 多选分类题 (Choice):
-     node scripts/typesafe.mjs --state "账户已被强平" --choice "low:正常,medium:预警,critical:爆仓"
-
-  4. 完整 JSON 模式:
-     node scripts/typesafe.mjs --json '{"state": "...", "questions": {...}}'
 `);
     process.exit(0);
   }
@@ -156,6 +165,21 @@ TypeSafe AI (System One) 原生客户端 CLI
       console.error('❌ 连通性自检失败:', err.message);
       process.exit(1);
     }
+  } else if (args.includes('--file')) {
+    const filePath = getArgValue('--file');
+    if (!filePath || !fs.existsSync(filePath)) {
+      console.error(`❌ 错误: 找不到指定的 JSON 文件: ${filePath}`);
+      process.exit(1);
+    }
+    try {
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const payload = JSON.parse(fileContent);
+      const res = await evaluateSystemOne(payload);
+      console.log(JSON.stringify(res, null, 2));
+    } catch (err) {
+      console.error('❌ 执行失败:', err.message);
+      process.exit(1);
+    }
   } else if (args.includes('--json')) {
     const jsonStr = getArgValue('--json');
     try {
@@ -163,44 +187,59 @@ TypeSafe AI (System One) 原生客户端 CLI
       const res = await evaluateSystemOne(parsed);
       console.log(JSON.stringify(res, null, 2));
     } catch (err) {
-      console.error('执行失败:', err.message);
+      console.error('❌ 执行失败:', err.message);
+      process.exit(1);
+    }
+  } else if (args.includes('--stdin')) {
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    for await (const chunk of process.stdin) {
+      input += chunk;
+    }
+    try {
+      const parsed = JSON.parse(input);
+      const res = await evaluateSystemOne(parsed);
+      console.log(JSON.stringify(res, null, 2));
+    } catch (err) {
+      console.error('❌ 执行失败:', err.message);
       process.exit(1);
     }
   } else {
-    const state = getArgValue('--state') || 'Empty state';
-    const noulQuestion = getArgValue('--noul');
-    const choiceQuestion = getArgValue('--choice');
+    // 兼容简单的命令行动态调用 (必须提供明确的 state 与 instructions)
+    const state = getArgValue('--state');
+    const instructions = getArgValue('--instructions') || getArgValue('--question');
+    const noulFlag = args.includes('--noul');
+    const choiceCriteria = getArgValue('--choice');
+
+    if (!state || !instructions) {
+      console.error('❌ 错误: 请使用 --json 或 --file 传入完整结构化判定，或至少提供 --state 与 --instructions。使用 --help 查看说明。');
+      process.exit(1);
+    }
 
     const questions = {};
-    if (noulQuestion) {
+    if (noulFlag) {
       questions.judgment = {
         type: 'noul',
-        instructions: noulQuestion
+        instructions: instructions
       };
-    } else if (choiceQuestion) {
-      // 格式: key1:desc1,key2:desc2
+    } else if (choiceCriteria) {
       const criteria = {};
-      for (const item of choiceQuestion.split(',')) {
+      for (const item of choiceCriteria.split(',')) {
         const [k, v] = item.split(':');
         if (k) criteria[k.trim()] = (v || k).trim();
       }
-      questions.classification = {
+      questions.judgment = {
         type: 'choice',
-        instructions: 'Classify the given state into one category',
+        instructions: instructions,
         criteria
       };
-    }
-
-    if (Object.keys(questions).length === 0) {
-      console.error('请提供 --noul 或 --choice 判定参数，或使用 --help 查看帮助。');
-      process.exit(1);
     }
 
     try {
       const res = await evaluateSystemOne({ state, questions });
       console.log(JSON.stringify(res, null, 2));
     } catch (err) {
-      console.error('调用失败:', err.message);
+      console.error('❌ 调用失败:', err.message);
       process.exit(1);
     }
   }
