@@ -32,7 +32,15 @@
 │           └── trading-signal/                # 链上聪明钱单笔交易信号与跟单分析
 │
 ├── custom/                            # 【自行研发与编排 Skills】（独立维护，永不冲突）
-│   └── square-mining/                 # 广场「内容挖矿」五步自动化全链路工作流
+│   ├── square-mining/                 # 广场「内容挖矿」五步自动化全链路工作流
+│   └── typesafe-evaluator/            # TypeSafe 业务决策与风控裁决器（情景自发触发）
+│
+├── typesafe-ai/                       # 【Git Submodule: 第三方开源官方技能（可选扩展 / Optional）】
+│   │                                  # Upstream: https://github.com/typesafe-ai/skills.git
+│   └── skills/
+│       └── typesafe-ai/
+│           ├── SKILL.md               # TypeSafe System One (Jev) 编程模型与状态类型化判断
+│           └── LICENSE                # MIT License
 │
 └── README.md                          # 本说明文档
 ```
@@ -65,7 +73,17 @@ git submodule update --init --recursive
 
 ---
 
-## 二、Antigravity 自动发现配置
+## 二、第三方独立 Skills 说明（可选扩展 / Optional）
+
+### [`typesafe-ai`](./typesafe-ai/skills/typesafe-ai/SKILL.md)
+* **性质**：可选扩展项（已注册为独立 Git Submodule，非强制基础依赖；若未配置 Key，系统自动降级为内置模型推理，不阻断主流程）。
+* **来源**：[typesafe-ai/skills (GitHub)](https://github.com/typesafe-ai/skills)（完全保持官方 submodule 纯净，通过 `git submodule update` 直接同步上游）。
+* **定位**：TypeSafe System One 模型（如 Jev）的结构化判断底层概念与编程原语。
+* **业务联动**：在业务场景中由自研技能 [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md) 依据情境自发触发，通过 [`scripts/typesafe.mjs`](../../scripts/typesafe.mjs) 纯原生调用（完全由 `.env` 中的 `TYPESAFE_API_KEY` 与 `TYPESAFE_ENDPOINT` 驱动，支持任意第三方中转站/反向代理）。
+
+---
+
+## 三、Antigravity 自动发现配置
 
 在根目录 [`.agents/skills.json`](../skills.json) 中已注册多路径扫描入口：
 ```json
@@ -73,7 +91,8 @@ git submodule update --init --recursive
   "entries": [
     { "path": ".agents/skills/binance-skills-hub/skills/binance" },
     { "path": ".agents/skills/binance-skills-hub/skills/binance-web3" },
-    { "path": ".agents/skills/custom" }
+    { "path": ".agents/skills/custom" },
+    { "path": ".agents/skills/typesafe-ai/skills" }
   ]
 }
 ```

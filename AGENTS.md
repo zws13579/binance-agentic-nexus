@@ -81,7 +81,10 @@
 
 ## 三、项目技能体系（官方与自研 Skill 分层清单）
 
-所有 Skill 统一存放于项目工作区目录 [`.agents/skills/`](./.agents/skills/) 下，完全与全局配置隔离。通过根目录 [`.agents/skills.json`](./.agents/skills.json) 统一注册扫描路径，划分为 **`binance-skills-hub`（官方开源 Git Submodule）** 与 **`custom/`（本地自研/编排包）** 两大体系。
+所有 Skill 统一存放于项目工作区目录 [`.agents/skills/`](./.agents/skills/) 下，完全与全局配置隔离。通过根目录 [`.agents/skills.json`](./.agents/skills.json) 统一注册扫描路径，划分为：
+1. **`binance-skills-hub`（官方开源 Git Submodule - 【核心强制项】）**：项目核心底座；
+2. **`custom/`（本地自研/编排包 - 【核心强制项】）**：含广场挖矿 `square-mining` 与业务裁决器 `typesafe-evaluator`；
+3. **`typesafe-ai`（第三方独立开源 - 【可选扩展项 / Optional】）**：非强制安装依赖。用户按需选装或配置第三方中转 API；若未安装或未配置 Key，系统各业务模块自动降级为内置模型推理，不影响主流程。
 
 ### 1. Web3 链上钱包与资金流 (Official: binance-web3 & binance)
 | 技能目录 | 说明 | 核心调用方式 |
@@ -121,12 +124,18 @@
 | [`fiat`](./.agents/skills/binance-skills-hub/skills/binance/fiat) | 币安法币通道、出入金汇率、支付渠道与限额查询 | REST API |
 | [`p2p`](./.agents/skills/binance-skills-hub/skills/binance/p2p) | P2P / C2C 广告盘口比价、订单追踪与商户资料 | REST API |
 
-### 6. 广场生态与教育赋能 (Official & Custom)
+### 6. 广场生态、业务裁决与教育赋能 (Official & Custom)
 | 技能目录 | 类型 | 说明 | 核心调用方式 |
 | :--- | :---: | :--- | :--- |
 | [`square-mining`](./.agents/skills/custom/square-mining) | 自研定制 | 广场「内容挖矿」五步自动化工作流（热点选品→市场数据→新闻求证→拟真文案→自动发帖） | `/square-mining` 或 `node .agents/skills/custom/square-mining/scripts/pipeline.mjs` |
+| [`typesafe-evaluator`](./.agents/skills/custom/typesafe-evaluator) | 自研定制 | TypeSafe System One 业务决策裁决器（开仓风控评级、聪明钱行为分类、广场推文机审） | 意图自发触发 / `node scripts/typesafe.mjs` |
 | [`square-post`](./.agents/skills/binance-skills-hub/skills/binance/square-post) | 官方原生 | 币安广场自动发帖（短动态、长文章、带图帖、视频帖） | `node .agents/skills/binance-skills-hub/skills/binance/square-post/scripts/post-*.mjs` |
 | [`academy-skill`](./.agents/skills/binance-skills-hub/skills/binance/academy-skill) | 官方原生 | 币安学院官方教育内容（词汇表、课程、学赚体系） | 知识问答检索 |
+
+### 7. 【可选扩展 / Optional】第三方开源 AI 结构化判定能力 (Third-party)
+| 技能目录 | 类型 | 说明 | 核心调用方式 |
+| :--- | :---: | :--- | :--- |
+| [`typesafe-ai`](./.agents/skills/typesafe-ai) | 可选开源 | 官方原生 TypeSafe System One (Jev) 原语与说明（非强制项目，按需选装，以后随官方上游覆盖更新） | 原生 fetch / SDK 指导 |
 
 ---
 
@@ -210,7 +219,10 @@
 3. **恢复凭证与网络**：
    - 参考 [`.env.example`](./.env.example) 复制或填入本项目的真实凭证创建 `.env`；
    - 开启网络代理工具（首选开启 TUN 模式，免任何端口配置直接畅连）。
-4. **日常官方 Skills 更新 SOP**：
+4. **【可选扩展模块】TypeSafe AI 结构化判定（非强制，按需启用）**：
+   - 本项目核心功能不强依赖 TypeSafe；
+   - 若需启用外部第三方/官方 System One 结构化裁决，只需在 `.env` 中补充 `TYPESAFE_API_KEY`（及可选的 `TYPESAFE_ENDPOINT`）；若拉取其官方说明，放于 `.agents/skills/typesafe-ai` 即可。
+5. **日常官方 Skills 更新 SOP**：
    ```bash
    git submodule update --remote --merge
    ```
@@ -240,20 +252,24 @@
 
 ```text
 binance-agentic-nexus/
-├── .gitmodules                 # Git 子模块注册文件 (关联 binance-skills-hub)
+├── .gitmodules                 # Git 子模块注册文件 (关联 binance-skills-hub 与 typesafe-ai)
 ├── .agents/
-│   ├── skills.json             # Antigravity 技能扫描路径声明（binance / binance-web3 / custom）
+│   ├── skills.json             # Antigravity 技能扫描路径声明（binance / binance-web3 / custom / typesafe-ai）
 │   └── skills/                 # 技能体系根目录
 │       ├── binance-skills-hub/ # 【Git Submodule】币安官方开源技能中心 (binance & binance-web3)
 │       │   └── skills/
 │       │       ├── binance/    # 7个 CEX、法币、支付、广场官方技能
 │       │       └── binance-web3/# 13个 Web3、钱包、聪明钱、跟单官方技能
-│       ├── custom/             # 本地自研与复合工作流技能包 (如 square-mining)
+│       ├── custom/             # 【核心自研】本地编排与业务裁决技能包
+│       │   ├── square-mining/  # 广场「内容挖矿」五步自动化全链路工作流
+│       │   └── typesafe-evaluator/# TypeSafe 业务决策与风控裁决器（情景自发触发）
+│       ├── typesafe-ai/        # 【可选扩展 / Optional】第三方开源官方技能（按需选装）
 │       └── README.md           # 技能分层索引与维护指南
 ├── scripts/
 │   ├── binance_unified.js      # CEX 现货/合约/风控一体化客户端（原生 fetch，免 curl 进程）
 │   ├── proxy_bootstrap.mjs     # 备用网络代理引导入口（仅非 TUN 纯端口代理模式时使用）
-│   └── publish_square.mjs      # 广场内容挖矿推流发布脚本
+│   ├── publish_square.mjs      # 广场内容挖矿推流发布脚本
+│   └── typesafe.mjs            # TypeSafe AI 结构化判定客户端与 CLI（完全由 .env 驱动）
 ├── .env                         # 核心凭证配置文件（勿提交至公共仓库）
 ├── .env.example                 # 环境变量配置模板（公开、供新环境复现）
 ├── .gitignore                   # Git 忽略规则

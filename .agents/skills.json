@@ -2,6 +2,7 @@
   "entries": [
     { "path": ".agents/skills/binance-skills-hub/skills/binance" },
     { "path": ".agents/skills/binance-skills-hub/skills/binance-web3" },
-    { "path": ".agents/skills/custom" }
+    { "path": ".agents/skills/custom" },
+    { "path": ".agents/skills/typesafe-ai/skills" }
   ]
 }

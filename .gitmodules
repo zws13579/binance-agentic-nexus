@@ -1,3 +1,6 @@
 [submodule ".agents/skills/binance-skills-hub"]
 	path = .agents/skills/binance-skills-hub
 	url = https://github.com/binance/binance-skills-hub.git
+[submodule ".agents/skills/typesafe-ai"]
+	path = .agents/skills/typesafe-ai
+	url = https://github.com/typesafe-ai/skills.git
