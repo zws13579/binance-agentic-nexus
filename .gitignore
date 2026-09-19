@@ -43,6 +43,8 @@ build/
 
 # 4. 日志、临时文件与数据库
 logs/
+tmp/
+.tmp/
 *.log
 *.sqlite
 *.sqlite3

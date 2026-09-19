@@ -14,6 +14,11 @@ description: >-
 > [!IMPORTANT]
 > **绝对准则：严禁将文案或文章硬编码在脚本文件中！**  
 > 脚本是永久只读的通用基础设施工具。每次发帖绝不需要修改或覆写任何代码文件，实现 **0 脚本改动、100% 动态原创发帖**。
+>
+> **草稿缓存与即时清理铁律**：  
+> - 若需将文案持久化为文件以供推流，**必须且仅能缓存至受 `.gitignore` 保护的 `tmp/` 文件夹**（如 `tmp/draft.txt` 或 `tmp/draft_<timestamp>.txt`），确保绝不污染 Git 追踪与远程仓库。
+> - **严禁**将任何草稿存放在技能目录、根目录或其他代码资产目录中。
+> - **发布完成后必须立即清理**：推流操作结束（无论成功或报错）后，必须立即执行删除命令（如 `rm -f tmp/draft.txt`），确保工作区始终处于 Clean 纯净状态。
 
 ---
 
@@ -56,18 +61,28 @@ node .agents/skills/custom/square-mining/scripts/pipeline.mjs --collect
 ### 步骤 2：AI 动态创作
 Agent 结合最新盘面与要闻事实，在上下文中完成 100% 纯原创写作，生成适合广场传播的短动态（250~400 字）或长文章。
 
-### 步骤 3：直接推流发布
-```bash
-# 方式 A：直接传参推流
-node .agents/skills/custom/square-mining/scripts/pipeline.mjs --publish-text "动态正文内容..."
+### 步骤 3：直接推流发布与清理
 
-# 方式 B：通过临时文件推流（推荐，避开 Shell 换行与引号转义问题）
-node .agents/skills/custom/square-mining/scripts/pipeline.mjs --file "/path/to/draft.txt"
+```bash
+# 方式 A：直接传参推流（简单纯文本短动态）
+node .agents/skills/custom/square-mining/scripts/pipeline.mjs --publish-text "动态正文内容..." --publish
+
+# 方式 B：通过受 .gitignore 保护的 tmp 文件夹推流（强烈推荐，避免字符转义错乱）
+# 1. 创建 tmp 目录并将文案写入临时草稿
+mkdir -p tmp
+# Agent 将原创正文写入 tmp/draft.txt
+
+# 2. 推流发布 (正式发布需带上 --publish；若仅预览则使用 --dry-run)
+node .agents/skills/custom/square-mining/scripts/pipeline.mjs --file "tmp/draft.txt" --publish
+
+# 3. 发布完成后必须立即删除临时文件，保持工作区干净
+rm -f tmp/draft.txt
 
 # 方式 C：带标题长文章发布
-node .agents/skills/custom/square-mining/scripts/pipeline.mjs --file "/path/to/draft.txt" --title "文章标题"
+node .agents/skills/custom/square-mining/scripts/pipeline.mjs --file "tmp/draft.txt" --title "文章标题" --publish
+rm -f tmp/draft.txt
 ```
-若用户需要先审阅，可追加 `--dry-run` 参数输出预览。
+若用户需要先审阅，可将 `--publish` 替换为 `--dry-run` 参数输出本地渲染预览。推流结束后均需执行 `rm -f` 清理。
 
 ---
 
