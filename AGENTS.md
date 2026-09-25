@@ -1,291 +1,108 @@
-# AGENTS.md - Binance Agentic Nexus (BAN) 统一运行规范与全景知识库
+# Binance Agentic Nexus (BAN)
 
-> **项目正式名称**：**`Binance Agentic Nexus`**（简称 **`BAN`** / 仓库名：`binance-agentic-nexus`）  
-> **定位描述**：打通 CEX 量化风控、Web3 链上智能钱包、全网聪明钱情报雷达与币安广场内容挖矿的三位一体 AI 智能体操作系统。  
-> 
-> 本文件是本项目的最高运行准则与全景记忆文档。任何后续对话中的 Agent 进驻本项目时，**必须第一时间阅读并严格遵循本文档所载的所有架构、规范与经验精髓**，严禁重复造轮子，严禁脱离现有资产盲目开发。
+<!-- 人类维护备注：本文件是 AI Agent 的行动指南，非百科全书。
+     深度 SOP 已拆分到 docs/ 目录，Agent 按需读取。
+     Claude Code 会自动剥离 HTML 注释，不消耗 Token。
+     目标规格：≤100 行 / ≤5KB / 零截断。 -->
 
----
+AI-driven Binance ecosystem: CEX spot/futures quantitative trading,
+Web3 on-chain smart wallet, smart money intelligence radar,
+and Binance Square Write-to-Earn automation.
 
-## 一、项目核心背景与基本准则
+Tech stack: Node.js (LTS), native fetch, CLI-first (no package.json in root).
 
-1. **项目定位**：
-   - **Binance Agentic Nexus (BAN)** 致力于构建一套基于多智能体（Agentic AI）驱动的币安综合生态交互与量化投研系统，深度打通 **Web3 链上智能钱包**、**CEX 现货/合约量化与盘口追踪**、**全网 Alpha 聪明钱/情绪情报监控** 以及 **币安广场（Binance Square）内容挖矿自动化**。
-2. **第一铁律：严禁重复造轮子与污染工程目录**：
-   - 本项目经历过多轮深度对话演进，沉淀了极其丰富的本地 Skill、环境配置与核心脚本。
-   - **禁止**在没有检查项目现有资产的情况下自行重写测试脚本或安装冗余依赖。优先通过 CLI（如 `baw`、`node scripts/binance_unified.js`、`node scripts/typesafe.mjs`）直接组合调用。
-   - **禁止**向项目核心目录（如 `scripts/`、根目录）倾倒任何一次性胶水脚本或探测脚本。
-   - **临时脚本规范**：若特定复杂任务确需运行一次性脚本或生成临时数据，**必须统一放置在 `tmp/` 目录下**（已在 `.gitignore` 中忽略），并在执行验证完毕后**第一时间彻底清理删除**，保持项目工作区与 Git 状态的绝对纯净。
-   - **禁止**向全局目录乱放配置文件；项目所有扩展功能均以本项目工作区本地优先。
-3. **防“降智”与长会话隔离准则**：
-   - 历史多轮对话经验证明，单个对话在达到 50~100 轮交互后会出现严重的上下文拥挤和认知衰退（俗称“降智”）。
-   - 新开会话时，Agent 必须以本项目根目录的 `AGENTS.md`、`.env`、`.agents/skills/` 和 `scripts/` 作为唯一权威事实来源，无需重新询问用户已知背景。
+## Quick Commands
 
----
+```bash
+# CEX account overview (spot, futures, earn, positions)
+node scripts/binance_unified.js status
 
-## 二、运行环境与网络基础设施规范
+# Batch ticker query (price, 24h change, volume)
+node scripts/binance_unified.js ticker BTCUSDT SOLUSDT
 
-### 1. 网络代理机制与运行方式
-* **网络现状**：访问币安服务（CEX REST API、Web3 接口、Square 端点、DNS 解析）在特定网络环境下需要代理支持。
-* **双模式代理支持**：
-  1. **TUN 模式（系统级透明代理，首选日常状态）**：
-     - 当前环境已配置 TUN 虚拟网卡代理。在 TUN 模式开启时，操作系统会在网络层接管所有进出流量。
-     - **脚本执行**：所有自定义 Node.js / Python 脚本或系统命令均可**直接原生运行**（如 `node your_script.mjs`），无需附加任何代理引导参数。
-  2. **端口代理模式（备用方案 / TUN 关闭时）**：
-     - 若未开启 TUN 模式，本地 HTTP/SOCKS 代理端口通常为 `http://127.0.0.1:7890`（已在 `.env` 中定义 `HTTP_PROXY` 与 `HTTPS_PROXY`）。
-     - **为何存在 [`./scripts/proxy_bootstrap.mjs`](./scripts/proxy_bootstrap.mjs)**：Node.js 原生 `fetch`（基于 `undici`）默认不会主动读取 Windows 环境变量中的 `HTTP_PROXY`。在**纯端口代理环境（无 TUN）**下，可通过 `node --import ./scripts/proxy_bootstrap.mjs your_script.mjs` 注入 `ProxyAgent` 作为备用通道；而在 TUN 模式正常工作时，完全无需挂载此脚本。
-     - **代理模式实操验证方法**：
-       ```bash
-       # 验证 TUN 透明代理连通性（直连）
-       node -e "fetch('https://api.binance.com/api/v3/ping').then(r=>console.log('TUN OK', r.status)).catch(e=>console.log('TUN FAIL', e.message))"
-       # 验证备用端口代理引导（挂载 proxy_bootstrap）
-       node --import ./scripts/proxy_bootstrap.mjs -e "fetch('https://api.binance.com/api/v3/ping').then(r=>console.log('Proxy OK', r.status))"
-       ```
-     - **跨设备路径兼容**：`proxy_bootstrap.mjs` 内部采用动态多候选路径解析 `undici`（结合 `process.execPath`），避免因不同设备 Node.js 安装路径差异导致模块加载失败。
+# Futures positions & unrealized PnL
+node scripts/binance_unified.js positions
 
-### 2. 命令行工具维护规范（`baw` CLI）
-* **完全动态与按需更新原则**：
-  - `baw`（`@binance/agentic-wallet`）处于高频迭代期，**禁止在文档或逻辑中硬编码任何特定版本号**，以防后续会话因静态版本信息产生误判。
-  - CLI 工具已注册至系统 `PATH`，全局各终端均可直接执行 `baw` 命令。
-  - **为何采用全局安装（`-g`）而非本地 `node_modules`**：本项目底层各官方 Skill（如 `binance-wallet-tracker`、`binance-leaderboard` 等）在其规范中均以系统级 CLI 命令 `baw <command>` 直接调用。全局安装避免了在项目根目录引入冗余的 `package.json` 与繁琐的 `npx` / 相对路径前缀，确保所有 Skill、脚本与多 Agent 协同无缝原生执行。
-* **动态检查与按需升级**：
-  - Agent 在执行涉及钱包或相关 Skill 的任务时，应以各 Skill 的 `requiredCliVersion` 声明或 npm 远端最新版为准动态适配。
-  - 若提示版本不匹配或遇到新接口需求，执行动态检查与升级：
-    ```bash
-    # 动态查看本地安装版本与远端最新版本
-    baw --version
-    npm view @binance/agentic-wallet version
-    # 升级到官方最新发布版
-    npm install -g @binance/agentic-wallet@latest
-    ```
-  - 升级后按当前调用的 Skill 目标版本执行校验：
-    ```bash
-    baw cli-check --required-version <target-version> --json
-    ```
-* **已知问题：升级后端口代理注入丢失**（仅端口代理模式相关）：
-  - `npm install -g` 会重写 `baw.cmd` 和 `baw.ps1` 入口脚本，导致手动注入的 `--import proxy_bootstrap.mjs` 参数被覆盖。
-  - **TUN 模式用户可忽略**：TUN 开启时 `baw` 无需 `--import` 也能正常联网。
-  - 若需恢复端口代理支持，在 `baw.cmd` 最后一行的 `"%_prog%"` 后、`"%dp0%\..."` 前插入：
-    ```
-    --import "file:///<项目绝对路径>/scripts/proxy_bootstrap.mjs"
-    ```
-    `baw.ps1` 中类似，在所有 `node` 调用参数中追加相同的 `--import` 标志。
+# Market sentiment (long/short ratio, funding rate, OI)
+node scripts/binance_unified.js sentiment SOLUSDT
 
-### 3. 环境变量配置规范（`.env`）
-根目录下的 [`.env`](./.env) 文件包含了项目全部关键凭证，Agent 应直接读取该文件（**绝对红线：严禁在对话、日志或报错中以任何形式输出/打印 .env 文件的原始内容与凭据。如需向用户汇报配置状态，只能提及变量名或展示脱敏掩码，禁止回显真实 Value**）：
-* `BINANCE_API_KEY` / `BINANCE_SECRET_KEY`：币安 CEX API 密钥对。
-* `BINANCE_API_ENV`：API 环境类型（默认 `prod`）。
-* `HTTP_PROXY` / `HTTPS_PROXY`：本地备用代理地址（`http://127.0.0.1:7890`）。
-* `BINANCE_CHAIN_ID`：Web3 默认链 ID（如 BSC: `56`，Solana: `CT_501`）。
-* `BINANCE_SQUARE_OPENAPI_KEY`：币安广场 Open API 内容发布 Key。
+# Open position with atomic TP/SL
+node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>
 
----
+# Web3 wallet status
+baw wallet status --json
 
-## 三、项目技能体系（官方与自研 Skill 分层清单）
-
-所有 Skill 统一存放于项目工作区目录 [`.agents/skills/`](./.agents/skills/) 下，完全与全局配置隔离。通过根目录 [`.agents/skills.json`](./.agents/skills.json) 统一注册扫描路径，划分为：
-1. **`binance-skills-hub`（官方开源 Git Submodule - 【核心强制项】）**：项目核心底座；
-2. **`custom/`（本地自研/编排包 - 【核心强制项】）**：含广场挖矿 `square-mining` 与业务裁决器 `typesafe-evaluator`；
-3. **`typesafe-ai`（第三方独立开源 - 【可选扩展项 / Optional】）**：非强制安装依赖。用户按需选装或配置第三方中转 API；若未安装或未配置 Key，系统各业务模块自动降级为内置模型推理，不影响主流程。
-
-### 1. Web3 链上钱包与资金流 (Official: binance-web3 & binance)
-| 技能目录 | 说明 | 核心调用方式 |
-| :--- | :--- | :--- |
-| [`binance-agentic-wallet`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-agentic-wallet) | Web3 钱包连接、代币转账、DEX 交易、签名、DeFi 质押、预测市场 | `baw <command> --json` |
-| [`onchain-pay`](./.agents/skills/binance-skills-hub/skills/binance/onchain-pay) | 法币买币并直接提至链上钱包（一键购币直达） | `sign_and_call.sh` |
-| [`payment`](./.agents/skills/binance-skills-hub/skills/binance/payment) | Binance Pay 扫码与链接收付款（C2C / PIX） | `python payment_skill.py` |
-
-### 2. 市场热度、代币筛选与情报发现 (Official: binance-web3)
-| 技能目录 | 说明 | 核心调用方式 |
-| :--- | :--- | :--- |
-| [`crypto-market-rank`](./.agents/skills/binance-skills-hub/skills/binance-web3/crypto-market-rank) | 社交热度榜、代币热搜/涨幅榜、聪明钱净流入榜、Meme 发射台打新榜、交易员盈亏榜 | `node .agents/skills/binance-skills-hub/skills/binance-web3/crypto-market-rank/scripts/cli.mjs <cmd>` |
-| [`query-token-info`](./.agents/skills/binance-skills-hub/skills/binance-web3/query-token-info) | 查代币合约、实时价格、流动性、池子、K线与社交信息 | `node .agents/skills/binance-skills-hub/skills/binance-web3/query-token-info/scripts/cli.mjs <cmd>` |
-| [`query-address-info`](./.agents/skills/binance-skills-hub/skills/binance-web3/query-address-info) | 查单个钱包地址的多链代币持仓与价值快照 | `node .agents/skills/binance-skills-hub/skills/binance-web3/query-address-info/scripts/cli.mjs <cmd>` |
-| [`query-token-audit`](./.agents/skills/binance-skills-hub/skills/binance-web3/query-token-audit) | 代币安全审计、貔貅/假币/蜜罐合约检测 | 内置合约安全审计模型 |
-| [`trading-signal`](./.agents/skills/binance-skills-hub/skills/binance-web3/trading-signal) | 单笔链上聪明钱买卖信号、跟单收益率分析 | `node .agents/skills/binance-skills-hub/skills/binance-web3/trading-signal/scripts/cli.mjs <cmd>` |
-| [`meme-rush`](./.agents/skills/binance-skills-hub/skills/binance-web3/meme-rush) | Pump.fun / Four.meme 等发射台实时打新与叙事流 | `node .agents/skills/binance-skills-hub/skills/binance-web3/meme-rush/scripts/cli.mjs <cmd>` |
-
-### 3. 巨鲸与交易员追踪分析 (Official: binance-web3)
-| 技能目录 | 说明 | 核心调用方式 |
-| :--- | :--- | :--- |
-| [`binance-leaderboard`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-leaderboard) | Web3 交易员排行榜、Gem Hunter（寻宝）钱包筛选、6维交易画像打分 | `baw leaderboard <subcommand>` |
-| [`binance-wallet-tracker`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-wallet-tracker) | 钱包跟踪监控、共识买入检测、筹码吸筹/派发分析、大单异动监控 | `baw tracker <subcommand>` |
-| [`binance-trading-signal`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-trading-signal) | 平台策略、自定义信号策略管理与回测分析 | `baw signal <subcommand>` |
-| [`binance-onchain-copy-trader`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-onchain-copy-trader) | 链上跟单交易器与自动化执行 | 链上跟单交互模型 |
-
-### 4. 股票代币化与预测赛道 (Official: binance-web3)
-| 技能目录 | 说明 | 核心调用方式 |
-| :--- | :--- | :--- |
-| [`binance-tokenized-securities-info`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-tokenized-securities-info) | Ondo 美股代币化资产（AAPL/NVDA/MSFT）行情、RWA 储备证明、美股基本面与K线 | 查询 Ondo RWA API |
-| [`binance-sports-ai-analyzer`](./.agents/skills/binance-skills-hub/skills/binance-web3/binance-sports-ai-analyzer) | 体育赛事与预测市场 AI 分析 | 赛事预测模型 |
-
-### 5. CEX 交易、法币与 P2P (Official: binance)
-| 技能目录 | 说明 | 核心调用方式 |
-| :--- | :--- | :--- |
-| [`binance`](./.agents/skills/binance-skills-hub/skills/binance/binance) | CEX 现货、合约（USD-S）、闪兑（Convert）与账户风控 | `node scripts/binance_unified.js <cmd>` / REST API |
-| [`fiat`](./.agents/skills/binance-skills-hub/skills/binance/fiat) | 币安法币通道、出入金汇率、支付渠道与限额查询 | REST API |
-| [`p2p`](./.agents/skills/binance-skills-hub/skills/binance/p2p) | P2P / C2C 广告盘口比价、订单追踪与商户资料 | REST API |
-
-### 6. 广场生态、业务裁决与教育赋能 (Official & Custom)
-| 技能目录 | 类型 | 说明 | 核心调用方式 |
-| :--- | :---: | :--- | :--- |
-| [`square-mining`](./.agents/skills/custom/square-mining) | 自研定制 | 广场「内容挖矿」五步自动化工作流（热点选品→市场数据→新闻求证→拟真文案→自动发帖） | `/square-mining` 或 `node .agents/skills/custom/square-mining/scripts/pipeline.mjs` |
-| [`typesafe-evaluator`](./.agents/skills/custom/typesafe-evaluator) | 自研定制 | TypeSafe System One 业务决策裁决器（开仓风控评级、聪明钱行为分类、广场推文机审） | 意图自发触发 / `node scripts/typesafe.mjs` |
-| [`square-post`](./.agents/skills/binance-skills-hub/skills/binance/square-post) | 官方原生 | 币安广场自动发帖（短动态、长文章、带图帖、视频帖） | `node .agents/skills/binance-skills-hub/skills/binance/square-post/scripts/post-*.mjs` |
-| [`academy-skill`](./.agents/skills/binance-skills-hub/skills/binance/academy-skill) | 官方原生 | 币安学院官方教育内容（词汇表、课程、学赚体系） | 知识问答检索 |
-
-### 7. 【可选扩展 / Optional】第三方开源 AI 结构化判定能力 (Third-party)
-| 技能目录 | 类型 | 说明 | 核心调用方式 |
-| :--- | :---: | :--- | :--- |
-| [`typesafe-ai`](./.agents/skills/typesafe-ai) | 可选开源 | 官方原生 TypeSafe System One (Jev) 原语与说明（非强制项目，按需选装，以后随官方上游覆盖更新） | 原生 fetch / SDK 指导 |
-
----
-
-## 四、核心实战 SOP 与避坑指南
-
-### 1. Web3 智能钱包操作 SOP
-1. **连接前置验证**：
-   ```bash
-   baw wallet status --json
-   ```
-   若未登录则调用 `baw auth signin` 进行扫码授权。
-2. **转账与下单安全原则**：
-   - 必须先获取预估报价与 Gas 价格（`baw wallet gas-price`）。
-   - 严格遵循每日限额（`baw wallet left-quota`），大额转账必须二次确认。
-3. **美股代币化资产（bStocks）套利监控**：
-   - 关注美股开盘时段链上 Ondo 代币（`NVDA`、`AAPL`）与现实股价的折溢价波动，结合持仓监控脚本实现自动止盈。
-
-### 2. CEX 现货/合约 API 交互与量化投研 SOP
-1. **统一客户端资产（`scripts/binance_unified.js`）**：
-   - 本项目已沉淀一体化客户端 [`scripts/binance_unified.js`](./scripts/binance_unified.js)，整合现货、合约、资金流、行情与风控接口。
-   - **全面采用 Node.js 原生 `fetch()`**：严禁再使用 `child_process.execSync('curl.exe ...')` 子进程方式调用，消除进程 fork 性能损耗、跨平台兼容问题（Windows/Linux）与 Shell 注入风险。
-   - **自动重试机制**：底层 `httpRequest()` 内置 2 次指数退避重试，有效抵御代理或网络层偶发的 Socket 重置。
-   - **核心 CLI 子命令速查**：
-     ```bash
-     # 1. 账户资产概览（Spot、Futures、Earn 理财与逐仓持仓）
-     node scripts/binance_unified.js status
-     # 2. 批量行情查询（最新价、24h 涨跌、高低点与成交量）
-     node scripts/binance_unified.js ticker BTCUSDT SOLUSDT
-     # 3. 市场情绪与微观盘口（大户多空比、资金费率、持仓量、主动买卖比）
-     node scripts/binance_unified.js sentiment SOLUSDT
-     # 4. 当前合约逐仓/全仓持仓与未结盈亏
-     node scripts/binance_unified.js positions
-     # 5. 历史成交与手续费查询
-     node scripts/binance_unified.js trades SOLUSDT 5
-     # 6. 为已有持仓设置止盈止损条件单（TPSL）
-     node scripts/binance_unified.js set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> <qty>
-     # 7. 开仓并强制绑定止盈止损（原子级风控）
-     node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>
-     ```
-2. **防时间戳错误（`-1021`）与签名机制**：
-   - 客户端内部已自动调用 `/api/v3/time` 计算并维护 `timeOffset`，并在每次签名时注入 `recvWindow=10000`，彻底避免本地系统时间不同步问题。
-   - 严格以 HMAC SHA256 签名 `queryString`，Header 携带 `X-MBX-APIKEY`。
-3. **交易安全与硬风控防线**：
-   - **严禁裸奔开仓**：所有自动化或人工开仓策略必须明确止损价，优先调用 `open-tpsl` 实现进场与止损单的原子绑定，拒绝无风控持仓。
-   - **流动性与深度求证**：开单前需结合订单簿深度买卖墙差额（Bid/Ask Depth Ratio）与聪明钱净流入榜，判断支撑位是否牢固。
-
-### 3. 币安广场「内容挖矿 (Write to Earn)」SOP
-1. **第一步：全网权威财经热点与聪明钱选品（真实数据驱动，彻底移除失效网页爬虫）**：
-   - **宏观与行业热点**：直接从传统顶级金融媒体（CNBC、Yahoo Finance、MarketWatch）即时头条动态提炼宏观财经议题（如美联储利率决议、通胀预期、ETF 进展）；
-   - **资产选品联动**：结合 Web3 `smart-money-inflow`（聪明钱大幅净流入榜）与 `social-hype`（Web3 链上代币热度榜）锁定机构与聪明钱资金异动标的；
-   - **严禁虚假标签与死数据**：彻底移除失效的网页端 `square/trends` 爬虫（该页面受 AWS WAF 防护拦截）以及任何伪造标签，文末标签必须为真实宏观事件或行业主题（如 `#美联储加息 #大饼76K防线争夺`）。
-2. **第二步：真伪查验与新闻求证**：
-   - 联动 Web Search / 顶级金融媒体检索过去 24 小时真实宏观/行业事件（美联储利率决议、国会法案进展、ETF 审批、链上储备证明），严禁胡编乱造。
-3. **第三步：真人交易员拟真文案**：
-   - **文案绝对禁忌**：**严禁使用任何 Markdown 格式**（禁止 `**加粗**`、禁止 `# 标题`、禁止 `- 列表`、禁止成排 Emoji）。广场显示 Markdown 会造成严重排版乱码。
-   - **正确格式**：采用自然段落换行、包含大写 CASHTAG（且 Cashtags 数量严格 $\le$ 3，如 `$BTC`、`$ETH`）以及真实关联热搜话题（如 `#美联储加息25bp #大饼76K防线争夺`）。
-   - **交易员风格**：严禁自称“老韭菜”，严禁使用“总而言之/综上所述”，拒绝中庸和稀泥，用冷峻且掷地有声的断言收尾。
-4. **第四步：API 自动化推流发布**：
-   - 读取 `.env` 中的 `BINANCE_SQUARE_OPENAPI_KEY`，使用 `publish_square.mjs` 或 `pipeline.mjs --publish-text / --file` 直接推流发布。
-
----
-
-## 五、跨环境迁移与多 Agent（Codex / Claude / Cursor）协同规范
-
-### 1. 更换计算机 / 全新环境部署（3 步极简部署）
-当本项目迁移至新计算机、或通过 Git Clone 到新环境时，仅需 3 步即可实现全功能开箱即用：
-1. **拉取代码（带子模块递归克隆）**：
-   ```bash
-   # 克隆主项目并自动拉取 binance-skills-hub 官方子模块
-   git clone --recurse-submodules <repository-url>
-   # 若已执行普通 git clone，执行此命令补拉子模块：
-   git submodule update --init --recursive
-   ```
-2. **安装标准运行底座**：
-   - 安装官方标准 Node.js（LTS 版本）；
-   - 打开终端执行标准全局安装：
-     ```bash
-     npm install -g @binance/agentic-wallet@latest
-     ```
-   - 验证安装：`baw --version`。
-3. **恢复凭证与网络**：
-   - 参考 [`.env.example`](./.env.example) 复制或填入本项目的真实凭证创建 `.env`；
-   - 开启网络代理工具（首选开启 TUN 模式，免任何端口配置直接畅连）。
-4. **【可选扩展模块】TypeSafe AI 结构化判定（非强制，按需启用）**：
-   - 本项目核心功能不强依赖 TypeSafe；
-   - 若需启用外部第三方/官方 System One 结构化裁决，只需在 `.env` 中补充 `TYPESAFE_API_KEY`（及可选的 `TYPESAFE_ENDPOINT`）；若拉取其官方说明，放于 `.agents/skills/typesafe-ai` 即可。
-5. **日常官方 Skills 更新 SOP**：
-   ```bash
-   git submodule update --remote --merge
-   ```
-
-### 2. 在其他 AI 智能体（Codex / Claude Code / Cursor / Windsurf）中使用
-本项目具备天然的 **Agent-Agnostic（跨平台智能体通用性）**：
-* **记忆与规则导入**：
-  - 新 Agent 进入该项目后，仅需一条提示词引导：
-    > “请阅读根目录下的 `AGENTS.md`，严格遵循其中的架构规范、Skill 清单与实战 SOP 执行任务。”
-* **底层能力无锁定**：
-  - 本项目沉淀的全部 Skill 均基于**标准 CLI 与原生 Node.js / Python 脚本**，没有绑定 Antigravity 专有协议。
-  - 任何拥有终端执行权限的 Agent（如 OpenAI Codex、Claude Code、Cursor 等）均可直接运行：
-    ```bash
-    # 示例 1：查询全网热度榜 (Official Web3)
-    node .agents/skills/binance-skills-hub/skills/binance-web3/crypto-market-rank/scripts/cli.mjs token-rank '{"rankType":10}'
-    # 示例 2：查询链上钱包状态 (Official CLI)
-    baw wallet status --json
-    # 示例 3：发布广场动态 (Official CEX)
-    node .agents/skills/binance-skills-hub/skills/binance/square-post/scripts/post-text.mjs "动态正文..."
-    # 示例 4：运行自研广场挖矿工作流 (Custom)
-    node .agents/skills/custom/square-mining/scripts/pipeline.mjs --dry-run
-    ```
-
----
-
-## 六、项目文件目录树全景
-
-```text
-binance-agentic-nexus/
-├── .gitmodules                 # Git 子模块注册文件 (关联 binance-skills-hub 与 typesafe-ai)
-├── .agents/
-│   ├── skills.json             # Antigravity 技能扫描路径声明（binance / binance-web3 / custom / typesafe-ai）
-│   └── skills/                 # 技能体系根目录
-│       ├── binance-skills-hub/ # 【Git Submodule】币安官方开源技能中心 (binance & binance-web3)
-│       │   └── skills/
-│       │       ├── binance/    # 7个 CEX、法币、支付、广场官方技能
-│       │       └── binance-web3/# 13个 Web3、钱包、聪明钱、跟单官方技能
-│       ├── custom/             # 【核心自研】本地编排与业务裁决技能包
-│       │   ├── square-mining/  # 广场「内容挖矿」五步自动化全链路工作流
-│       │   └── typesafe-evaluator/# TypeSafe 业务决策与风控裁决器（情景自发触发）
-│       ├── typesafe-ai/        # 【可选扩展 / Optional】第三方开源官方技能（按需选装）
-│       └── README.md           # 技能分层索引与维护指南
-├── scripts/
-│   ├── binance_unified.js      # CEX 现货/合约/风控一体化客户端（原生 fetch，免 curl 进程）
-│   ├── proxy_bootstrap.mjs     # 备用网络代理引导入口（仅非 TUN 纯端口代理模式时使用）
-│   ├── publish_square.mjs      # 广场内容挖矿推流发布脚本
-│   └── typesafe.mjs            # TypeSafe AI 结构化判定客户端与 CLI（完全由 .env 驱动）
-├── .env                         # 核心凭证配置文件（勿提交至公共仓库）
-├── .env.example                 # 环境变量配置模板（公开、供新环境复现）
-├── .gitignore                   # Git 忽略规则
-└── AGENTS.md                    # 本项目最高规则与知识库说明书 (当前文件)
+# Square mining pipeline (dry run)
+node .agents/skills/custom/square-mining/scripts/pipeline.mjs --dry-run
 ```
 
----
+## Architecture & Code Map
 
-## 七、Agent 自检清单（每次执行任务前对照）
+- `scripts/binance_unified.js` — CEX unified client (spot/futures/risk, native fetch, auto retry)
+- `scripts/typesafe.mjs` — TypeSafe AI structured judgment CLI (driven by .env)
+- `scripts/publish_square.mjs` — Square content publishing script
+- `scripts/proxy_bootstrap.mjs` — Backup network proxy bootstrap (port-proxy mode only)
+- `.agents/skills/` — Skill system root (each skill has its own SKILL.md)
+  - `binance-skills-hub/` — Official Git Submodule (binance + binance-web3)
+  - `custom/` — Custom skills (square-mining, typesafe-evaluator)
+  - `typesafe-ai/` — Optional third-party extension
+- `.env` — Credentials (see variable list below; NEVER echo values)
 
-- [ ] 是否确认了当前是在项目工作区本地操作，未污染全局目录？
-- [ ] 是否严格遵守了隐私防线：绝不在对话、日志或报错中输出 .env 文件的真实内容与敏感凭据？
-- [ ] 若 TUN 代理已开启，是否已直接运行原生脚本？（仅在非 TUN 环境下才需挂载 proxy_bootstrap）
-- [ ] 若操作 `baw`，是否确认 CLI 版本满足当前 Skill 依赖，并在有新版本发布时及时跟进升级？
-- [ ] 若生成广场内容，是否严格确保了纯文本排版（**0 Markdown**）并挂载了 CASHTAG？
-- [ ] 是否优先检索并复用了本项目的现成 Skill，杜绝了重复造轮子？
-- [ ] 若确需运行一次性脚本，是否将其置于 `tmp/` 目录并在执行完毕后彻底清理干净？
+## Environment Variables (.env)
+
+Variables only — values are NEVER printed:
+`BINANCE_API_KEY`, `BINANCE_SECRET_KEY`, `BINANCE_API_ENV`,
+`HTTP_PROXY`, `HTTPS_PROXY`, `BINANCE_CHAIN_ID`, `BINANCE_SQUARE_OPENAPI_KEY`
+
+## Guardrails
+
+### Credentials
+- NEVER output, print, or log .env file contents or credential values in any form
+- When reporting config status, mention variable names or masked placeholders only
+
+### Directory Hygiene
+- NEVER dump one-off scripts into `scripts/` or project root
+- Temporary scripts MUST go in `tmp/` (gitignored) and be deleted after use
+- All extensions are workspace-local; no polluting global directories
+
+### Trading Safety
+- NEVER open positions without stop-loss — always use `open-tpsl` for atomic entry+SL
+- Verify orderbook depth (bid/ask ratio) + smart money inflow before entry
+
+### Square Content (Write to Earn)
+- STRICTLY zero Markdown in post body (no **bold**, # heading, - list, or emoji walls)
+- ≤3 CASHTAGs per post (uppercase, e.g. $BTC $ETH)
+- Tags must reference real macro events (e.g. #Fed加息 #BTC突破10万)
+- NEVER self-identify as "老韭菜"; NEVER use "总而言之/综上所述"
+- End with cold, decisive assertions — no fence-sitting
+
+### CLI Maintenance
+- NEVER hardcode `baw` version numbers; dynamically check via `baw --version`
+- After `npm install -g` upgrades, port-proxy injection in baw entry scripts is lost (TUN users unaffected)
+
+### Network
+- TUN mode (system-level transparent proxy) is the default — scripts run natively
+- Port-proxy mode (127.0.0.1:7890) is fallback only; see docs/network-proxy.md
+
+### Anti-Duplication
+- ALWAYS check existing Skills and scripts before building anything new
+- Prefer composing via CLI (`baw`, `node scripts/...`) over writing new code
+- Long sessions (50+ turns) degrade context quality — start fresh with this file as ground truth
+
+## Deep Dive Docs (read on demand)
+
+- `docs/sop-cex-trading.md` — CEX trading & quantitative research full SOP
+- `docs/sop-square-mining.md` — Square Write-to-Earn 4-step workflow
+- `docs/sop-web3-wallet.md` — Web3 wallet operations SOP
+- `docs/setup-guide.md` — Cross-environment deployment & multi-Agent collaboration
+- `docs/network-proxy.md` — Network proxy dual-mode deep dive
+
+## Agent Checklist
+
+- [ ] Operating in project workspace only — not polluting global directories?
+- [ ] Privacy guardrail: NOT outputting any .env real values?
+- [ ] If TUN proxy is on, running scripts natively? (proxy_bootstrap only for non-TUN)
+- [ ] If using `baw`, CLI version meets current Skill requirements?
+- [ ] If generating Square content, strictly plain text (0 Markdown) with ≤3 CASHTAGs?
+- [ ] Checked and reused existing Skills before building anything new?
+- [ ] If one-off scripts were needed, placed in `tmp/` and cleaned up after?
