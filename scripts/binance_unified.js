@@ -353,6 +353,15 @@ const Client = {
     }));
   },
 
+  // Query single order status by orderId or origClientOrderId
+  async getOrder(symbol, { orderId, origClientOrderId } = {}) {
+    if (!symbol) throw new Error('Symbol is required for getOrder');
+    const params = { symbol: symbol.toUpperCase().trim() };
+    if (orderId) params.orderId = orderId.toString();
+    if (origClientOrderId) params.origClientOrderId = origClientOrderId.toString();
+    return signedReq(FAPI_HOST, '/fapi/v1/order', params, 'GET');
+  },
+
   // Place standard order with Idempotency Key
   async placeOrder(params) {
     const orderParams = { ...params };
@@ -362,8 +371,8 @@ const Client = {
     return signedReq(FAPI_HOST, '/fapi/v1/order', orderParams, 'POST');
   },
 
-  // Open contract position with Chained TP/SL and Automated Compensating Rollback
-  async openPositionWithTPSL({ symbol, side, positionSide, quantity, type = 'MARKET', price, stopLossPrice, takeProfitPrice }) {
+  // Open contract position with Chained TP/SL, Lifecycle Correlation ID, and Robust State-Checked Rollback
+  async openPositionWithTPSL({ symbol, side, positionSide, quantity, type = 'MARKET', price, stopLossPrice, takeProfitPrice, clientOrderId }) {
     if (!symbol) {
       throw new Error('【风控硬拦截】开仓必须指定交易对 (symbol)！');
     }
@@ -387,8 +396,12 @@ const Client = {
     let refPrice = price ? parseFloat(price) : null;
     if (!refPrice) {
       // For MARKET orders, fetch latest ticker to perform pre-trade price logic validation
-      const ticker = await httpRequest(`${FAPI_HOST}/fapi/v1/ticker/price?symbol=${cleanSymbol}`);
-      refPrice = ticker && ticker.price ? parseFloat(ticker.price) : null;
+      try {
+        const ticker = await httpRequest(`${FAPI_HOST}/fapi/v1/ticker/price?symbol=${cleanSymbol}`);
+        refPrice = ticker && ticker.price ? parseFloat(ticker.price) : null;
+      } catch (err) {
+        console.warn(`[Warning] 无法获取 ${cleanSymbol} 实时价格用于事前防呆校验: ${err.message}`);
+      }
     }
 
     if (refPrice) {
@@ -409,14 +422,15 @@ const Client = {
       }
     }
 
-    // 2. Place entry order with idempotency protection
+    // 2. Structured Lifecycle Correlation ID
+    const correlationId = (clientOrderId || generateClientOrderId('BAN')).toString().slice(0, 28);
     const entryParams = {
       symbol: cleanSymbol,
       side: cleanSide,
       positionSide: cleanPosSide,
       type,
       quantity: quantity.toString(),
-      newClientOrderId: generateClientOrderId('BAN_ENTRY')
+      newClientOrderId: `${correlationId}_ENT`
     };
     if (type === 'LIMIT') {
       if (!price) throw new Error('【风控拦截】LIMIT 委托必须提供委托价格 (price)！');
@@ -426,7 +440,7 @@ const Client = {
 
     let entryRes;
     try {
-      entryRes = await signedReq(FAPI_HOST, '/fapi/v1/order', entryParams, 'POST');
+      entryRes = await this.placeOrder(entryParams);
       if (entryRes && entryRes.code && entryRes.code < 0) {
         throw new Error(`Binance API 报错: [${entryRes.code}] ${entryRes.msg}`);
       }
@@ -434,7 +448,7 @@ const Client = {
       throw new Error(`【开仓委托失败】${err.message}`);
     }
 
-    // 3. Chained TP/SL with Automatic Compensating Rollback
+    // 3. Chained TP/SL with Lifecycle Correlation and Robust State-Checked Rollback
     let tpslRes;
     try {
       tpslRes = await this.setTPSL({
@@ -442,7 +456,8 @@ const Client = {
         positionSide: cleanPosSide,
         quantity,
         stopLossPrice,
-        takeProfitPrice
+        takeProfitPrice,
+        clientAlgoIdPrefix: correlationId
       });
 
       const slErr = tpslRes.stopLoss && tpslRes.stopLoss.code < 0 ? tpslRes.stopLoss.msg : null;
@@ -452,24 +467,72 @@ const Client = {
       }
     } catch (tpslErr) {
       console.error(`【严重风控报警】入场单已提交，但保护单挂载失败 (${tpslErr.message})，立即启动补偿回滚！`);
+
       if (type === 'LIMIT' && entryRes.orderId) {
-        // Rollback for LIMIT order: cancel the open limit entry order immediately to avoid leaving naked pending order
+        // Query actual order status first before deciding rollback action
+        let orderState = null;
         try {
-          const cancelRes = await this.cancelOrder(cleanSymbol, entryRes.orderId);
-          return {
-            entrySucceeded: true,
-            tpslSucceeded: false,
-            rollbackSucceeded: true,
-            action: 'LIMIT_ORDER_CANCELLED',
-            error: tpslErr.message,
-            entry: entryRes,
-            cancelRes
-          };
-        } catch (cErr) {
-          throw new Error(`【双重失败】TP/SL 失败且撤回入场挂单失败: ${cErr.message}。请立刻人工检查订单！`);
+          orderState = await this.getOrder(cleanSymbol, { orderId: entryRes.orderId });
+        } catch {
+          orderState = null;
+        }
+
+        const status = orderState ? orderState.status : 'UNKNOWN';
+        const executedQty = orderState && orderState.executedQty ? parseFloat(orderState.executedQty) : 0;
+
+        if (status === 'FILLED' || executedQty >= parseFloat(quantity)) {
+          // Order already completely filled! Must emergency market close to avoid naked position!
+          try {
+            const rollbackClose = await this.closePosition(cleanSymbol, cleanPosSide);
+            return {
+              entrySucceeded: true,
+              tpslSucceeded: false,
+              rollbackSucceeded: true,
+              action: 'POSITION_EMERGENCY_CLOSED',
+              orderStatus: status,
+              executedQty,
+              error: tpslErr.message,
+              rollbackClose
+            };
+          } catch (closeErr) {
+            throw new Error(`【穿仓风险/紧急告警】限价单已全部成交但保护单挂载失败，且紧急平仓补偿失败: ${closeErr.message}。请立刻人工接管！`);
+          }
+        } else if (status === 'PARTIALLY_FILLED' || executedQty > 0) {
+          // Partially filled: cancel unfilled portion, emergency close executed portion
+          await this.cancelOrder(cleanSymbol, entryRes.orderId).catch(() => {});
+          try {
+            const rollbackClose = await this.closePosition(cleanSymbol, cleanPosSide);
+            return {
+              entrySucceeded: true,
+              tpslSucceeded: false,
+              rollbackSucceeded: true,
+              action: 'PARTIAL_POSITION_CLOSED',
+              orderStatus: status,
+              executedQty,
+              error: tpslErr.message,
+              rollbackClose
+            };
+          } catch (closeErr) {
+            throw new Error(`【穿仓风险/紧急告警】限价单部分成交但保护单挂载失败，且紧急平仓补偿失败: ${closeErr.message}。请立刻人工接管！`);
+          }
+        } else {
+          // Still NEW or unconfirmed: safely cancel limit order
+          try {
+            const cancelRes = await this.cancelOrder(cleanSymbol, entryRes.orderId);
+            return {
+              entrySucceeded: true,
+              tpslSucceeded: false,
+              rollbackSucceeded: true,
+              action: 'LIMIT_ORDER_CANCELLED',
+              orderStatus: status,
+              error: tpslErr.message,
+              cancelRes
+            };
+          } catch (cErr) {
+            throw new Error(`【双重失败】TP/SL 失败且撤回入场挂单失败: ${cErr.message}。请立刻人工检查订单！`);
+          }
         }
       } else if (type === 'MARKET') {
-        // Rollback for MARKET order: position opened, execute emergency market close to avoid naked position
         try {
           const rollbackClose = await this.closePosition(cleanSymbol, cleanPosSide);
           return {
@@ -478,7 +541,6 @@ const Client = {
             rollbackSucceeded: true,
             action: 'POSITION_EMERGENCY_CLOSED',
             error: tpslErr.message,
-            entry: entryRes,
             rollbackClose
           };
         } catch (closeErr) {
@@ -491,12 +553,13 @@ const Client = {
     return {
       entrySucceeded: true,
       tpslSucceeded: true,
+      correlationId,
       entry: entryRes,
       tpsl: tpslRes
     };
   },
 
-  // Close Position with MARKET Order, Hedge/One-Way Mode Adaptive, and Verified Protection Cleanup
+  // Close Position with MARKET Order, Hedge/One-Way Mode Adaptive, and Verified Zero-Position Protection Cleanup
   async closePosition(symbol, positionSide) {
     if (!symbol) throw new Error('Symbol is required to close position.');
     const cleanSymbol = symbol.toUpperCase().trim();
@@ -538,12 +601,33 @@ const Client = {
     }
 
     // 1. Execute market close
-    const closeRes = await signedReq(FAPI_HOST, '/fapi/v1/order', closeParams, 'POST');
+    const closeRes = await this.placeOrder(closeParams);
     if (!closeRes || (closeRes.code && closeRes.code < 0)) {
       throw new Error(`【平仓失败】币安拒绝平仓: [${closeRes ? closeRes.code : 'UNKNOWN'}] ${closeRes ? closeRes.msg : '网络异常'}。保护单坚决保留，原仓位保持受保护状态！`);
     }
 
-    // 2. Clear remaining algo orders ONLY for this matching positionSide after confirmed successful close
+    // 2. Poll/verify position risk to confirm positionAmt is genuinely 0 before cancelling algo protection
+    let remainingAmt = 0;
+    for (let i = 0; i < 3; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      const currentPositions = await this.getPositionRisk(cleanSymbol);
+      const remainingPos = Array.isArray(currentPositions)
+        ? currentPositions.find(p => p.positionSide === targetPos.positionSide)
+        : null;
+      remainingAmt = remainingPos ? Math.abs(parseFloat(remainingPos.positionAmt)) : 0;
+      if (remainingAmt === 0) break;
+    }
+
+    if (remainingAmt > 0) {
+      return {
+        closeSuccess: false,
+        closeOrder: closeRes,
+        remainingQuantity: remainingAmt,
+        message: `【平仓未完全完成】仓位仍剩余 ${remainingAmt} ${cleanSymbol}，保护单坚决保留未撤销！`
+      };
+    }
+
+    // 3. Clear remaining algo orders ONLY for this matching positionSide after confirmed 0 position
     const cancelledAlgos = await this.cancelAlgoOrdersByPositionSide(cleanSymbol, targetPos.positionSide);
 
     return {
@@ -563,6 +647,11 @@ const Client = {
   async cancelAllOrders(symbol) {
     if (!symbol) throw new Error('Symbol is required to cancel all orders.');
     return signedReq(FAPI_HOST, '/fapi/v1/allOpenOrders', { symbol: symbol.toUpperCase().trim() }, 'DELETE');
+  },
+
+  // Place an Algo Order (conditional / TP / SL)
+  async placeAlgoOrder(params) {
+    return signedReq(FAPI_HOST, '/fapi/v1/algoOrder', params, 'POST');
   },
 
   // Cancel an Algo Order by ID
@@ -591,8 +680,8 @@ const Client = {
     return results;
   },
 
-  // Set Stop-Loss and Take-Profit for current position via Algo Order API
-  async setTPSL({ symbol, positionSide, quantity, stopLossPrice, takeProfitPrice, cancelExisting = true }) {
+  // Set Stop-Loss and Take-Profit with Create-Before-Cancel Transaction Pattern
+  async setTPSL({ symbol, positionSide, quantity, stopLossPrice, takeProfitPrice, cancelExisting = true, clientAlgoIdPrefix }) {
     if (!symbol) {
       throw new Error('Symbol is required for setTPSL');
     }
@@ -602,18 +691,6 @@ const Client = {
     const cleanSymbol = symbol.toUpperCase().trim();
     const cleanPosSide = positionSide.toUpperCase().trim();
     const results = { cancelled: [] };
-
-    if (cancelExisting) {
-      // Granular cleanup: only cancel existing algos for the SAME positionSide to prevent cross-strategy interference
-      const existing = await this.getOpenAlgos(cleanSymbol);
-      if (Array.isArray(existing)) {
-        for (const order of existing) {
-          if (order.positionSide === cleanPosSide) {
-            results.cancelled.push({ algoId: order.algoId, res: await this.cancelAlgoOrder(order.algoId) });
-          }
-        }
-      }
-    }
 
     const baseParams = {
       algoType: 'CONDITIONAL',
@@ -627,20 +704,47 @@ const Client = {
       baseParams.closePosition = 'true';
     }
 
+    // 1. Create-Before-Cancel: First create new Stop Loss & Take Profit to guarantee 0-gap protection
     if (stopLossPrice) {
-      results.stopLoss = await signedReq(FAPI_HOST, '/fapi/v1/algoOrder', {
+      const slParams = {
         ...baseParams,
         type: 'STOP_MARKET',
         triggerPrice: stopLossPrice.toString()
-      }, 'POST');
+      };
+      if (clientAlgoIdPrefix) {
+        slParams.clientAlgoId = `${clientAlgoIdPrefix}_SL`.slice(0, 36);
+      }
+      results.stopLoss = await this.placeAlgoOrder(slParams);
     }
     if (takeProfitPrice) {
-      results.takeProfit = await signedReq(FAPI_HOST, '/fapi/v1/algoOrder', {
+      const tpParams = {
         ...baseParams,
         type: 'TAKE_PROFIT_MARKET',
         triggerPrice: takeProfitPrice.toString()
-      }, 'POST');
+      };
+      if (clientAlgoIdPrefix) {
+        tpParams.clientAlgoId = `${clientAlgoIdPrefix}_TP`.slice(0, 36);
+      }
+      results.takeProfit = await this.placeAlgoOrder(tpParams);
     }
+
+    // 2. Only after new protection orders are submitted, cancel old ones of the same positionSide
+    if (cancelExisting) {
+      const existing = await this.getOpenAlgos(cleanSymbol);
+      if (Array.isArray(existing)) {
+        const newAlgoIds = [
+          results.stopLoss && results.stopLoss.algoId,
+          results.takeProfit && results.takeProfit.algoId
+        ].filter(Boolean);
+
+        for (const order of existing) {
+          if (order.positionSide === cleanPosSide && !newAlgoIds.includes(order.algoId)) {
+            results.cancelled.push({ algoId: order.algoId, res: await this.cancelAlgoOrder(order.algoId) });
+          }
+        }
+      }
+    }
+
     return results;
   }
 };
@@ -801,6 +905,14 @@ async function cli() {
         break;
       }
 
+      case 'order':
+        if (!args[0] || !args[1]) {
+          console.error('Usage: node scripts/binance_unified.js order <symbol> <orderId>');
+          process.exit(1);
+        }
+        console.log(JSON.stringify(await Client.getOrder(args[0], { orderId: args[1] }), null, 2));
+        break;
+
       case 'close-position':
         if (!args[0]) {
           console.error('Usage: node scripts/binance_unified.js close-position <symbol> [LONG|SHORT]');
@@ -871,6 +983,7 @@ Usage: node scripts/binance_unified.js <command> [arguments...]
   close-position <symbol> [LONG|SHORT]                                             - Adaptive market close and verified protection cleanup
 
 [Order Management]
+  order <symbol> <orderId>                                                         - Query single standard order status
   open-orders [symbol]                                                             - Query pending standard orders
   open-algos [symbol]                                                              - Query pending algo/conditional orders
   cancel-order <symbol> <orderId>                                                  - Cancel standard order by ID
