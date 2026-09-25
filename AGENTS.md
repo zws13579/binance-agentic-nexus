@@ -82,7 +82,7 @@ Variables only — values are NEVER printed:
 
 ### Network
 - TUN mode (system-level transparent proxy) is the default — scripts run natively
-- Port-proxy mode (127.0.0.1:7890) is fallback only; see docs/network-proxy.md
+- Port-proxy mode (via HTTP_PROXY in .env) is fallback only; see docs/network-proxy.md
 
 ### Anti-Duplication
 - ALWAYS check existing Skills and scripts before building anything new

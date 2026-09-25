@@ -14,7 +14,7 @@
 
 ## 模式 2：端口代理模式（备用方案 / TUN 关闭时）
 
-若未开启 TUN 模式，本地 HTTP/SOCKS 代理端口通常为 `http://127.0.0.1:7890`（已在 `.env` 中定义 `HTTP_PROXY` 与 `HTTPS_PROXY`）。
+若未开启 TUN 模式，通过 `.env` 中的 `HTTP_PROXY` 与 `HTTPS_PROXY` 指定代理地址与端口（依据本地代理软件的实际端口设置）。
 
 ### 为何存在 `scripts/proxy_bootstrap.mjs`
 
