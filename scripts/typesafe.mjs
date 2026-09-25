@@ -3,8 +3,10 @@
  * TypeSafe AI (System One) 原生执行引擎与通用客户端
  * 纯原生 Node.js 实现，零外部依赖，完全由 .env 驱动
  * 支持传入任意动态构建的 state 与 questions 结构化判定请求
+ *
+ * Network: 使用 Node.js 原生 fetch()。TUN 模式下直接原生运行；
+ * 端口代理模式下挂载引导脚本：node --import ./scripts/proxy_bootstrap.mjs scripts/typesafe.mjs ...
  */
-import './proxy_bootstrap.mjs';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

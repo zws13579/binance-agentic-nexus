@@ -3,8 +3,10 @@
  * 币安广场通用推流发布脚本
  * 支持通过命令行参数 --text、--file 或 --title 发布动态或长文
  * 严禁在脚本内硬编码任何文章内容
+ *
+ * Network: 使用 Node.js 原生 fetch()。TUN 模式下直接原生运行；
+ * 端口代理模式下挂载引导脚本：node --import ./scripts/proxy_bootstrap.mjs scripts/publish_square.mjs ...
  */
-import './proxy_bootstrap.mjs';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
