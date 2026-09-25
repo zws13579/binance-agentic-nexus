@@ -30,7 +30,7 @@
  *   node scripts/binance_unified.js cancel-order <symbol> <orderId>
  *   node scripts/binance_unified.js cancel-all <symbol>
  *   node scripts/binance_unified.js cancel-algo <algoId>
- *   node scripts/binance_unified.js cancel-all-algos <symbol>
+ *   node scripts/binance_unified.js cancel-all-algos <symbol> [LONG|SHORT]
  */
 
 const fs = require('fs');
@@ -66,14 +66,19 @@ const FAPI_HOST = 'https://fapi.binance.com';
 
 let timeOffset = null;
 
-// 2. Core Network & Signing (native fetch with auto timeout & retry)
-async function httpRequest(url, method = 'GET', headers = {}, retries = 2) {
-  for (let i = 0; i <= retries; i++) {
+// Helper: Generate Idempotent Client Order ID
+function generateClientOrderId(prefix = 'BAN') {
+  return `${prefix}_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+// 2. Core Network & Signing
+// GET requests retry up to 2 times. Mutating POST/DELETE requests NEVER retry blindly to prevent duplicate execution.
+async function httpRequest(url, method = 'GET', headers = {}, retries = undefined) {
+  const maxRetries = (retries !== undefined) ? retries : (method === 'GET' ? 2 : 0);
+
+  for (let i = 0; i <= maxRetries; i++) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(url, { method, headers, signal: controller.signal });
-      clearTimeout(timeoutId);
+      const res = await fetch(url, { method, headers, signal: AbortSignal.timeout(10000) });
 
       if (res.status === 429 || res.status === 418) {
         console.error(`[API 频率告警] HTTP ${res.status}: 触发币安接口频次限制`);
@@ -86,7 +91,7 @@ async function httpRequest(url, method = 'GET', headers = {}, retries = 2) {
         return text;
       }
     } catch (err) {
-      if (i === retries) throw err;
+      if (i === maxRetries) throw err;
       await new Promise(r => setTimeout(r, 400 * (i + 1)));
     }
   }
@@ -107,14 +112,14 @@ function sign(qs) {
   return crypto.createHmac('sha256', SECRET_KEY).update(qs).digest('hex');
 }
 
-async function signedReq(host, endpoint, params = {}, method = 'GET') {
+async function signedReq(host, endpoint, params = {}, method = 'GET', retries = undefined) {
   await syncTime();
   const ts = Date.now() + timeOffset;
   const qp = new URLSearchParams({ ...params, timestamp: ts.toString(), recvWindow: '10000' });
   const qs = qp.toString();
   const sig = sign(qs);
   const fullUrl = `${host}${endpoint}?${qs}&signature=${sig}`;
-  let res = await httpRequest(fullUrl, method, { 'X-MBX-APIKEY': API_KEY });
+  let res = await httpRequest(fullUrl, method, { 'X-MBX-APIKEY': API_KEY }, retries);
 
   // Auto-recover from timestamp drift (-1021)
   if (res && res.code === -1021) {
@@ -125,7 +130,7 @@ async function signedReq(host, endpoint, params = {}, method = 'GET') {
     const retryQs = retryQp.toString();
     const retrySig = sign(retryQs);
     const retryUrl = `${host}${endpoint}?${retryQs}&signature=${retrySig}`;
-    res = await httpRequest(retryUrl, method, { 'X-MBX-APIKEY': API_KEY });
+    res = await httpRequest(retryUrl, method, { 'X-MBX-APIKEY': API_KEY }, retries);
   }
 
   return res;
@@ -195,9 +200,12 @@ const Client = {
   async getDepth(symbol, limit = 20) {
     if (!symbol) throw new Error('Symbol is required for depth analysis.');
     const cleanSymbol = symbol.toUpperCase().trim();
+    const validFutLimits = [5, 10, 20, 50, 100, 500, 1000];
+    const futLimit = validFutLimits.find(l => l >= limit) || 20;
+
     const [spotRes, futRes] = await Promise.all([
       httpRequest(`${SPOT_HOST}/api/v3/depth?symbol=${cleanSymbol}&limit=${limit}`),
-      httpRequest(`${FAPI_HOST}/fapi/v1/depth?symbol=${cleanSymbol}&limit=${limit}`)
+      httpRequest(`${FAPI_HOST}/fapi/v1/depth?symbol=${cleanSymbol}&limit=${futLimit}`)
     ]);
 
     const calcDepth = (data) => {
@@ -305,6 +313,9 @@ const Client = {
   },
 
   async setPositionMode(dualSide) {
+    if (typeof dualSide !== 'boolean' && dualSide !== 'true' && dualSide !== 'false') {
+      throw new Error(`【参数校验拦截】setPositionMode 仅接受 true 或 false，收到非法参数: "${dualSide}"`);
+    }
     const dualSidePosition = (dualSide === true || dualSide === 'true') ? 'true' : 'false';
     return signedReq(FAPI_HOST, '/fapi/v1/positionSide/dual', { dualSidePosition }, 'POST');
   },
@@ -342,15 +353,22 @@ const Client = {
     }));
   },
 
-  // Place standard order
+  // Place standard order with Idempotency Key
   async placeOrder(params) {
-    return signedReq(FAPI_HOST, '/fapi/v1/order', params, 'POST');
+    const orderParams = { ...params };
+    if (!orderParams.newClientOrderId) {
+      orderParams.newClientOrderId = generateClientOrderId('BAN_ORD');
+    }
+    return signedReq(FAPI_HOST, '/fapi/v1/order', orderParams, 'POST');
   },
 
-  // Open contract position with MANDATORY Stop-Loss and Take-Profit
+  // Open contract position with Chained TP/SL and Automated Compensating Rollback
   async openPositionWithTPSL({ symbol, side, positionSide, quantity, type = 'MARKET', price, stopLossPrice, takeProfitPrice }) {
     if (!symbol) {
       throw new Error('【风控硬拦截】开仓必须指定交易对 (symbol)！');
+    }
+    if (!positionSide) {
+      throw new Error('【风控硬拦截】开仓必须明确指定持仓方向 positionSide (LONG|SHORT)！');
     }
     if (!stopLossPrice) {
       throw new Error('【风控硬拦截】开仓必须指定硬止损价格 (stopLossPrice)，严禁裸奔开仓！');
@@ -361,15 +379,44 @@ const Client = {
 
     const cleanSymbol = symbol.toUpperCase().trim();
     const cleanSide = side.toUpperCase().trim();
-    const cleanPosSide = positionSide ? positionSide.toUpperCase().trim() : (cleanSide === 'BUY' ? 'LONG' : 'SHORT');
+    const cleanPosSide = positionSide.toUpperCase().trim();
+    const sl = parseFloat(stopLossPrice);
+    const tp = parseFloat(takeProfitPrice);
 
-    // 1. Place entry order
+    // 1. Price Direction Consistency Validation (Prevent inverse order logic before sending)
+    let refPrice = price ? parseFloat(price) : null;
+    if (!refPrice) {
+      // For MARKET orders, fetch latest ticker to perform pre-trade price logic validation
+      const ticker = await httpRequest(`${FAPI_HOST}/fapi/v1/ticker/price?symbol=${cleanSymbol}`);
+      refPrice = ticker && ticker.price ? parseFloat(ticker.price) : null;
+    }
+
+    if (refPrice) {
+      if (cleanPosSide === 'LONG') {
+        if (sl >= refPrice) {
+          throw new Error(`【价格逻辑防呆拦截】多单止损价 ($${sl}) 不能大于或等于参考价格 ($${refPrice})！`);
+        }
+        if (tp <= refPrice) {
+          throw new Error(`【价格逻辑防呆拦截】多单止盈价 ($${tp}) 不能小于或等于参考价格 ($${refPrice})！`);
+        }
+      } else if (cleanPosSide === 'SHORT') {
+        if (sl <= refPrice) {
+          throw new Error(`【价格逻辑防呆拦截】空单止损价 ($${sl}) 不能小于或等于参考价格 ($${refPrice})！`);
+        }
+        if (tp >= refPrice) {
+          throw new Error(`【价格逻辑防呆拦截】空单止盈价 ($${tp}) 不能大于或等于参考价格 ($${refPrice})！`);
+        }
+      }
+    }
+
+    // 2. Place entry order with idempotency protection
     const entryParams = {
       symbol: cleanSymbol,
       side: cleanSide,
       positionSide: cleanPosSide,
       type,
-      quantity: quantity.toString()
+      quantity: quantity.toString(),
+      newClientOrderId: generateClientOrderId('BAN_ENTRY')
     };
     if (type === 'LIMIT') {
       if (!price) throw new Error('【风控拦截】LIMIT 委托必须提供委托价格 (price)！');
@@ -377,24 +424,79 @@ const Client = {
       entryParams.timeInForce = 'GTC';
     }
 
-    const entryRes = await signedReq(FAPI_HOST, '/fapi/v1/order', entryParams, 'POST');
-    if (entryRes && entryRes.code && entryRes.code < 0) {
-      throw new Error(`【开仓委托失败】Binance API 报错: [${entryRes.code}] ${entryRes.msg}`);
+    let entryRes;
+    try {
+      entryRes = await signedReq(FAPI_HOST, '/fapi/v1/order', entryParams, 'POST');
+      if (entryRes && entryRes.code && entryRes.code < 0) {
+        throw new Error(`Binance API 报错: [${entryRes.code}] ${entryRes.msg}`);
+      }
+    } catch (err) {
+      throw new Error(`【开仓委托失败】${err.message}`);
     }
 
-    // 2. Automatically bind TP and SL
-    const tpslRes = await this.setTPSL({
-      symbol: cleanSymbol,
-      positionSide: cleanPosSide,
-      quantity,
-      stopLossPrice,
-      takeProfitPrice
-    });
+    // 3. Chained TP/SL with Automatic Compensating Rollback
+    let tpslRes;
+    try {
+      tpslRes = await this.setTPSL({
+        symbol: cleanSymbol,
+        positionSide: cleanPosSide,
+        quantity,
+        stopLossPrice,
+        takeProfitPrice
+      });
 
-    return { entry: entryRes, tpsl: tpslRes };
+      const slErr = tpslRes.stopLoss && tpslRes.stopLoss.code < 0 ? tpslRes.stopLoss.msg : null;
+      const tpErr = tpslRes.takeProfit && tpslRes.takeProfit.code < 0 ? tpslRes.takeProfit.msg : null;
+      if (slErr || tpErr) {
+        throw new Error(`TP/SL 挂单返回异常: ${slErr || tpErr}`);
+      }
+    } catch (tpslErr) {
+      console.error(`【严重风控报警】入场单已提交，但保护单挂载失败 (${tpslErr.message})，立即启动补偿回滚！`);
+      if (type === 'LIMIT' && entryRes.orderId) {
+        // Rollback for LIMIT order: cancel the open limit entry order immediately to avoid leaving naked pending order
+        try {
+          const cancelRes = await this.cancelOrder(cleanSymbol, entryRes.orderId);
+          return {
+            entrySucceeded: true,
+            tpslSucceeded: false,
+            rollbackSucceeded: true,
+            action: 'LIMIT_ORDER_CANCELLED',
+            error: tpslErr.message,
+            entry: entryRes,
+            cancelRes
+          };
+        } catch (cErr) {
+          throw new Error(`【双重失败】TP/SL 失败且撤回入场挂单失败: ${cErr.message}。请立刻人工检查订单！`);
+        }
+      } else if (type === 'MARKET') {
+        // Rollback for MARKET order: position opened, execute emergency market close to avoid naked position
+        try {
+          const rollbackClose = await this.closePosition(cleanSymbol, cleanPosSide);
+          return {
+            entrySucceeded: true,
+            tpslSucceeded: false,
+            rollbackSucceeded: true,
+            action: 'POSITION_EMERGENCY_CLOSED',
+            error: tpslErr.message,
+            entry: entryRes,
+            rollbackClose
+          };
+        } catch (closeErr) {
+          throw new Error(`【穿仓风险/紧急告警】市价开仓后保护单挂载失败，且紧急平仓补偿失败: ${closeErr.message}。请立即人工接管！`);
+        }
+      }
+      throw tpslErr;
+    }
+
+    return {
+      entrySucceeded: true,
+      tpslSucceeded: true,
+      entry: entryRes,
+      tpsl: tpslRes
+    };
   },
 
-  // Close Position with MARKET Order and automatically clean up open TP/SL algo orders
+  // Close Position with MARKET Order, Hedge/One-Way Mode Adaptive, and Verified Protection Cleanup
   async closePosition(symbol, positionSide) {
     if (!symbol) throw new Error('Symbol is required to close position.');
     const cleanSymbol = symbol.toUpperCase().trim();
@@ -414,20 +516,38 @@ const Client = {
     const amt = Math.abs(parseFloat(targetPos.positionAmt));
     const closeSide = parseFloat(targetPos.positionAmt) > 0 ? 'SELL' : 'BUY';
 
-    // 1. Execute market close
-    const closeRes = await signedReq(FAPI_HOST, '/fapi/v1/order', {
+    // Adapt to Hedge Mode vs One-way Mode
+    const modeInfo = await this.getPositionMode();
+    const isHedgeMode = modeInfo && modeInfo.dualSidePosition === true;
+
+    const closeParams = {
       symbol: cleanSymbol,
       side: closeSide,
-      positionSide: targetPos.positionSide,
       type: 'MARKET',
       quantity: amt.toString(),
-      reduceOnly: 'true'
-    }, 'POST');
+      newClientOrderId: generateClientOrderId('BAN_CLOSE')
+    };
 
-    // 2. Clear remaining algo orders (TP/SL)
-    const cancelledAlgos = await this.cancelAllAlgoOrders(cleanSymbol);
+    if (isHedgeMode) {
+      // In Hedge Mode, specify positionSide. Do NOT send reduceOnly to avoid Binance -1106 error.
+      closeParams.positionSide = targetPos.positionSide;
+    } else {
+      // In One-way Mode, positionSide is BOTH and reduceOnly is true.
+      closeParams.positionSide = 'BOTH';
+      closeParams.reduceOnly = 'true';
+    }
+
+    // 1. Execute market close
+    const closeRes = await signedReq(FAPI_HOST, '/fapi/v1/order', closeParams, 'POST');
+    if (!closeRes || (closeRes.code && closeRes.code < 0)) {
+      throw new Error(`【平仓失败】币安拒绝平仓: [${closeRes ? closeRes.code : 'UNKNOWN'}] ${closeRes ? closeRes.msg : '网络异常'}。保护单坚决保留，原仓位保持受保护状态！`);
+    }
+
+    // 2. Clear remaining algo orders ONLY for this matching positionSide after confirmed successful close
+    const cancelledAlgos = await this.cancelAlgoOrdersByPositionSide(cleanSymbol, targetPos.positionSide);
 
     return {
+      closeSuccess: true,
       closeOrder: closeRes,
       cancelledAlgos
     };
@@ -450,36 +570,51 @@ const Client = {
     return signedReq(FAPI_HOST, '/fapi/v1/algoOrder', { algoId: algoId.toString() }, 'DELETE');
   },
 
-  // Cancel all open algo orders for a symbol
-  async cancelAllAlgoOrders(symbol) {
+  // Cancel all open algo orders for a symbol (optionally filtered by positionSide)
+  async cancelAllAlgoOrders(symbol, positionSide) {
+    return this.cancelAlgoOrdersByPositionSide(symbol, positionSide);
+  },
+
+  // Granular Algo Order Cancellation by PositionSide
+  async cancelAlgoOrdersByPositionSide(symbol, positionSide) {
     const cleanSymbol = symbol.toUpperCase().trim();
+    const cleanPosSide = positionSide ? positionSide.toUpperCase().trim() : null;
     const algos = await this.getOpenAlgos(cleanSymbol);
     const results = [];
     if (Array.isArray(algos)) {
       for (const a of algos) {
-        results.push(await this.cancelAlgoOrder(a.algoId));
+        if (!cleanPosSide || a.positionSide === cleanPosSide) {
+          results.push(await this.cancelAlgoOrder(a.algoId));
+        }
       }
     }
     return results;
   },
 
   // Set Stop-Loss and Take-Profit for current position via Algo Order API
-  async setTPSL({ symbol, positionSide = 'LONG', quantity, stopLossPrice, takeProfitPrice, cancelExisting = true }) {
+  async setTPSL({ symbol, positionSide, quantity, stopLossPrice, takeProfitPrice, cancelExisting = true }) {
     if (!symbol) {
       throw new Error('Symbol is required for setTPSL');
+    }
+    if (!positionSide) {
+      throw new Error('positionSide (LONG|SHORT) is required for setTPSL');
     }
     const cleanSymbol = symbol.toUpperCase().trim();
     const cleanPosSide = positionSide.toUpperCase().trim();
     const results = { cancelled: [] };
 
     if (cancelExisting) {
+      // Granular cleanup: only cancel existing algos for the SAME positionSide to prevent cross-strategy interference
       const existing = await this.getOpenAlgos(cleanSymbol);
       if (Array.isArray(existing)) {
         for (const order of existing) {
-          results.cancelled.push({ algoId: order.algoId, res: await this.cancelAlgoOrder(order.algoId) });
+          if (order.positionSide === cleanPosSide) {
+            results.cancelled.push({ algoId: order.algoId, res: await this.cancelAlgoOrder(order.algoId) });
+          }
         }
       }
     }
+
     const baseParams = {
       algoType: 'CONDITIONAL',
       symbol: cleanSymbol,
@@ -700,10 +835,10 @@ async function cli() {
 
       case 'cancel-all-algos':
         if (!args[0]) {
-          console.error('Usage: node scripts/binance_unified.js cancel-all-algos <symbol>');
+          console.error('Usage: node scripts/binance_unified.js cancel-all-algos <symbol> [LONG|SHORT]');
           process.exit(1);
         }
-        console.log(JSON.stringify(await Client.cancelAllAlgoOrders(args[0]), null, 2));
+        console.log(JSON.stringify(await Client.cancelAllAlgoOrders(args[0], args[1] || undefined), null, 2));
         break;
 
       case 'help':
@@ -718,7 +853,7 @@ Usage: node scripts/binance_unified.js <command> [arguments...]
   status                                                                            - Overview of Spot, Futures, and Earn balances
   positions [symbol]                                                               - Active contract positions, PnL, leverage
   trades <symbol> [limit]                                                          - Formatted user trade history
-  position-mode [true|false]                                                       - Query or set dual/hedge position mode
+  position-mode [true|false]                                                       - Query or set dual/hedge position mode (strict boolean)
 
 [Market Data & Microstructure]
   ticker <s1> [s2...]                                                              - Query 24h ticker prices and stats
@@ -730,10 +865,10 @@ Usage: node scripts/binance_unified.js <command> [arguments...]
 [Trading & Risk Management]
   leverage <symbol> <leverage>                                                     - Set leverage (1-125)
   margin-type <symbol> <ISOLATED|CROSSED>                                          - Set margin type
-  set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> [qty]                        - Bind TP/SL to an existing position
-  open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> MARKET <slPrice> <tpPrice>      - Market entry with atomic TP/SL
-  open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> LIMIT <price> <slPrice> <tpPrice> - Limit entry with atomic TP/SL
-  close-position <symbol> [LONG|SHORT]                                             - Market close position and clear TP/SL algos
+  set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> [qty]                        - Bind TP/SL to an existing position (positionSide isolated)
+  open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> MARKET <slPrice> <tpPrice>      - Market entry with chained TP/SL protection and rollback
+  open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> LIMIT <price> <slPrice> <tpPrice> - Limit entry with chained TP/SL protection and rollback
+  close-position <symbol> [LONG|SHORT]                                             - Adaptive market close and verified protection cleanup
 
 [Order Management]
   open-orders [symbol]                                                             - Query pending standard orders
@@ -741,7 +876,7 @@ Usage: node scripts/binance_unified.js <command> [arguments...]
   cancel-order <symbol> <orderId>                                                  - Cancel standard order by ID
   cancel-all <symbol>                                                              - Cancel all open standard orders
   cancel-algo <algoId>                                                             - Cancel algo order by ID
-  cancel-all-algos <symbol>                                                        - Cancel all open algo orders`);
+  cancel-all-algos <symbol> [LONG|SHORT]                                           - Cancel open algo orders (optional positionSide filter)`);
         if (cmd && !['help', '--help', '-h'].includes(cmd)) {
           process.exit(1);
         }
@@ -753,7 +888,12 @@ Usage: node scripts/binance_unified.js <command> [arguments...]
 }
 
 if (require.main === module) {
-  cli();
+  cli()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('Fatal CLI Error:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = Client;
