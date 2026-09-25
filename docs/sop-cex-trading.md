@@ -18,16 +18,16 @@
 node scripts/binance_unified.js status
 
 # 2. 批量行情查询（最新价、24h 涨跌、高低点与成交量）
-node scripts/binance_unified.js ticker BTCUSDT SOLUSDT
+node scripts/binance_unified.js ticker <symbol1> [symbol2 ...]
 
 # 3. 市场情绪与微观盘口（大户多空比、资金费率、持仓量、主动买卖比）
-node scripts/binance_unified.js sentiment SOLUSDT
+node scripts/binance_unified.js sentiment <symbol>
 
 # 4. 当前合约逐仓/全仓持仓与未结盈亏
-node scripts/binance_unified.js positions
+node scripts/binance_unified.js positions [symbol]
 
 # 5. 历史成交与手续费查询
-node scripts/binance_unified.js trades SOLUSDT 5
+node scripts/binance_unified.js trades <symbol> [limit]
 
 # 6. 为已有持仓设置止盈止损条件单（TPSL）
 node scripts/binance_unified.js set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> <qty>

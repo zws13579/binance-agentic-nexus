@@ -18,13 +18,13 @@ Tech stack: Node.js (LTS), native fetch, CLI-first (no package.json in root).
 node scripts/binance_unified.js status
 
 # Batch ticker query (price, 24h change, volume)
-node scripts/binance_unified.js ticker BTCUSDT SOLUSDT
+node scripts/binance_unified.js ticker <symbol1> [symbol2...]
 
 # Futures positions & unrealized PnL
-node scripts/binance_unified.js positions
+node scripts/binance_unified.js positions [symbol]
 
 # Market sentiment (long/short ratio, funding rate, OI)
-node scripts/binance_unified.js sentiment SOLUSDT
+node scripts/binance_unified.js sentiment <symbol>
 
 # Open position with atomic TP/SL
 node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>

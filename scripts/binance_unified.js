@@ -11,15 +11,15 @@
  *
  * Usage (from project root):
  *   node scripts/binance_unified.js status
- *   node scripts/binance_unified.js ticker BTCUSDT SOLUSDT
+ *   node scripts/binance_unified.js ticker <symbol1> [symbol2...]
  *   node scripts/binance_unified.js top-volume [limit]
- *   node scripts/binance_unified.js sentiment [symbol]
+ *   node scripts/binance_unified.js sentiment <symbol>
  *   node scripts/binance_unified.js open-algos [symbol]
  *   node scripts/binance_unified.js open-orders [symbol]
  *   node scripts/binance_unified.js positions [symbol]
- *   node scripts/binance_unified.js set-tpsl [symbol] [positionSide] [sl] [tp] [qty]
- *   node scripts/binance_unified.js trades [symbol] [limit]
- *   node scripts/binance_unified.js open-tpsl [symbol] [side] [posSide] [qty] [type] [price] [sl] [tp]
+ *   node scripts/binance_unified.js set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> [qty]
+ *   node scripts/binance_unified.js trades <symbol> [limit]
+ *   node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>
  */
 
 const fs = require('fs');
@@ -112,7 +112,10 @@ const Client = {
   },
 
   // Market Tickers
-  async getTickers(symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']) {
+  async getTickers(symbols) {
+    if (!symbols || (Array.isArray(symbols) && symbols.length === 0)) {
+      throw new Error('Symbols list is required. Example: Client.getTickers(["BTCUSDT", "ETHUSDT"])');
+    }
     const data = await httpRequest(`${SPOT_HOST}/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`);
     return Array.isArray(data) ? data.map(t => ({
       symbol: t.symbol,
@@ -143,7 +146,10 @@ const Client = {
   },
 
   // Sentiment & Derivative Indicators (L/S, OI, Taker)
-  async getSentiment(symbol = 'SOLUSDT') {
+  async getSentiment(symbol) {
+    if (!symbol) {
+      throw new Error('Symbol is required for sentiment analysis.');
+    }
     const globalRatio = await httpRequest(`${FAPI_HOST}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=1h&limit=1`);
     const topRatio = await httpRequest(`${FAPI_HOST}/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=1h&limit=1`);
     const takerRatio = await httpRequest(`${FAPI_HOST}/futures/data/takerlongshortRatio?symbol=${symbol}&period=1h&limit=1`);
@@ -180,7 +186,10 @@ const Client = {
   },
 
   // User Trade History
-  async getUserTrades(symbol = 'SOLUSDT', limit = 5) {
+  async getUserTrades(symbol, limit = 5) {
+    if (!symbol) {
+      throw new Error('Symbol is required to query trade history.');
+    }
     return signedReq(FAPI_HOST, '/fapi/v1/userTrades', { symbol, limit: limit.toString() });
   },
 
@@ -191,6 +200,9 @@ const Client = {
 
   // Open contract position with MANDATORY Stop-Loss and Take-Profit
   async openPositionWithTPSL({ symbol, side, positionSide, quantity, type = 'MARKET', price, stopLossPrice, takeProfitPrice }) {
+    if (!symbol) {
+      throw new Error('【风控硬拦截】开仓必须指定交易对 (symbol)！');
+    }
     if (!stopLossPrice) {
       throw new Error('【风控硬拦截】开仓必须指定硬止损价格 (stopLossPrice)，严禁裸奔开仓！');
     }
@@ -229,7 +241,10 @@ const Client = {
   },
 
   // Set Stop-Loss and Take-Profit for current position via Algo Order API
-  async setTPSL({ symbol = 'SOLUSDT', positionSide = 'SHORT', quantity, stopLossPrice, takeProfitPrice, cancelExisting = true }) {
+  async setTPSL({ symbol, positionSide = 'SHORT', quantity, stopLossPrice, takeProfitPrice, cancelExisting = true }) {
+    if (!symbol) {
+      throw new Error('Symbol is required for setTPSL');
+    }
     const results = { cancelled: [] };
     if (cancelExisting) {
       const existing = await this.getOpenAlgos(symbol);
@@ -278,49 +293,69 @@ async function cli() {
         console.log(JSON.stringify(await Client.getStatus(), null, 2));
         break;
       case 'ticker':
-        console.log(JSON.stringify(await Client.getTickers(args.length ? args : undefined), null, 2));
+        if (!args.length) {
+          console.error('Usage: node scripts/binance_unified.js ticker <symbol1> [symbol2 ...]');
+          process.exit(1);
+        }
+        console.log(JSON.stringify(await Client.getTickers(args.map(s => s.toUpperCase())), null, 2));
         break;
       case 'top-volume':
         console.log(JSON.stringify(await Client.getTopVolume(args[0] ? parseInt(args[0], 10) : 10), null, 2));
         break;
       case 'sentiment':
-        console.log(JSON.stringify(await Client.getSentiment(args[0] || 'SOLUSDT'), null, 2));
+        if (!args[0]) {
+          console.error('Usage: node scripts/binance_unified.js sentiment <symbol>');
+          process.exit(1);
+        }
+        console.log(JSON.stringify(await Client.getSentiment(args[0].toUpperCase()), null, 2));
         break;
       case 'open-algos':
-        console.log(JSON.stringify(await Client.getOpenAlgos(args[0]), null, 2));
+        console.log(JSON.stringify(await Client.getOpenAlgos(args[0] ? args[0].toUpperCase() : undefined), null, 2));
         break;
       case 'open-orders':
-        console.log(JSON.stringify(await Client.getOpenOrders(args[0]), null, 2));
+        console.log(JSON.stringify(await Client.getOpenOrders(args[0] ? args[0].toUpperCase() : undefined), null, 2));
         break;
       case 'positions':
-        console.log(JSON.stringify(await Client.getPositionRisk(args[0]), null, 2));
+        console.log(JSON.stringify(await Client.getPositionRisk(args[0] ? args[0].toUpperCase() : undefined), null, 2));
         break;
       case 'set-tpsl':
+        if (!args[0] || !args[1] || !args[2] || !args[3]) {
+          console.error('Usage: node scripts/binance_unified.js set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> [qty]');
+          process.exit(1);
+        }
         console.log(JSON.stringify(await Client.setTPSL({
-          symbol: args[0] || 'SOLUSDT',
-          positionSide: args[1] || 'SHORT',
+          symbol: args[0].toUpperCase(),
+          positionSide: args[1].toUpperCase(),
           stopLossPrice: args[2],
           takeProfitPrice: args[3],
           quantity: args[4]
         }), null, 2));
         break;
       case 'trades':
-        console.log(JSON.stringify(await Client.getUserTrades(args[0] || 'SOLUSDT', args[1] ? parseInt(args[1], 10) : 5), null, 2));
+        if (!args[0]) {
+          console.error('Usage: node scripts/binance_unified.js trades <symbol> [limit]');
+          process.exit(1);
+        }
+        console.log(JSON.stringify(await Client.getUserTrades(args[0].toUpperCase(), args[1] ? parseInt(args[1], 10) : 5), null, 2));
         break;
       case 'open-tpsl':
+        if (!args[0] || !args[1] || !args[2] || !args[3] || !args[4] || !args[6] || !args[7]) {
+          console.error('Usage: node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>');
+          process.exit(1);
+        }
         console.log(JSON.stringify(await Client.openPositionWithTPSL({
-          symbol: args[0] || 'SOLUSDT',
-          side: args[1] || 'SELL',
-          positionSide: args[2] || 'SHORT',
-          quantity: args[3] || '0.05',
-          type: args[4] || 'LIMIT',
-          price: args[5] || '101.58',
-          stopLossPrice: args[6] || '102.15',
-          takeProfitPrice: args[7] || '99.80'
+          symbol: args[0].toUpperCase(),
+          side: args[1].toUpperCase(),
+          positionSide: args[2].toUpperCase(),
+          quantity: args[3],
+          type: args[4].toUpperCase(),
+          price: args[5],
+          stopLossPrice: args[6],
+          takeProfitPrice: args[7]
         }), null, 2));
         break;
       default:
-        console.log('Available commands: status, ticker [symbols...], top-volume [limit], sentiment [symbol], open-algos [symbol], open-orders [symbol], positions [symbol], set-tpsl [symbol] [positionSide] [sl] [tp] [qty], trades [symbol] [limit], open-tpsl [symbol] [side] [positionSide] [qty] [type] [price] [sl] [tp]');
+        console.log('Available commands: status, ticker <symbol1> [symbol2...], top-volume [limit], sentiment <symbol>, open-algos [symbol], open-orders [symbol], positions [symbol], set-tpsl <symbol> <LONG|SHORT> <slPrice> <tpPrice> [qty], trades <symbol> [limit], open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <slPrice> <tpPrice>');
     }
   } catch (err) {
     console.error('Execution error:', err.message);
