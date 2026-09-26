@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * 币安广场通用推流发布脚本
- * 支持通过命令行参数 --text、--file 或 --title 发布动态或长文
- * 严禁在脚本内硬编码任何文章内容
+ * 币安广场统一推流发布脚本 (Agent-Friendly Wrapper)
+ *
+ * 所有底层能力 100% 复用官方 square-post 技能包 lib.mjs，
+ * 本脚本仅提供 --file、--dry-run、中文预览、Markdown 清洗等 Agent 适配层。
  *
  * Network: 使用 Node.js 原生 fetch()。TUN 模式下直接原生运行；
  * 端口代理模式下挂载引导脚本：node --import ./scripts/proxy_bootstrap.mjs scripts/publish_square.mjs ...
@@ -10,53 +11,68 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  resolveApiKey, maskApiKey, publish, printPublishSuccess, uploadImage
+} from '../.agents/skills/binance-skills-hub/skills/binance/square-post/scripts/lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const envPath = path.join(__dirname, '..', '.env');
+const args = process.argv.slice(2);
 
-let apiKey = '';
+// ---- .env 自动加载 (仅注入 process.env，Key 解析交给 resolveApiKey) ----
+const envPath = path.join(__dirname, '..', '.env');
 if (fs.existsSync(envPath)) {
-  const envContent = fs.readFileSync(envPath, 'utf8');
-  for (const line of envContent.split('\n')) {
-    const squareMatch = line.match(/^\s*BINANCE_SQUARE_OPENAPI_KEY\s*=\s*(.+)$/);
-    if (squareMatch) {
-      apiKey = squareMatch[1].trim();
-      break;
-    }
-    const apiMatch = line.match(/^\s*BINANCE_API_KEY\s*=\s*(.+)$/);
-    if (apiMatch && !apiKey) {
-      apiKey = apiMatch[1].trim();
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx > 0) {
+      const k = trimmed.slice(0, eqIdx).trim();
+      const v = trimmed.slice(eqIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+      if (!process.env[k]) process.env[k] = v;
     }
   }
 }
 
-const args = process.argv.slice(2);
-
-function getArgValue(flag) {
+// ---- 参数解析 ----
+function getArg(flag) {
   const idx = args.indexOf(flag);
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : null;
 }
 
-const isDryRun = args.includes('--dry-run');
-const textArg = getArgValue('--text');
-const fileArg = getArgValue('--file');
-const titleArg = getArgValue('--title');
+const isDryRun  = args.includes('--dry-run');
+const textArg   = getArg('--text');
+const fileArg   = getArg('--file');
+const titleArg  = getArg('--title');
+const coverArg  = getArg('--cover');
+const imagesArg = getArg('--images');
 
+// ---- Help ----
 if (args.includes('--help') || (!textArg && !fileArg)) {
   console.log(`
-使用方式:
-  node scripts/publish_square.mjs --text "<正文内容>" [--title "<文章标题>"] [--dry-run]
-  node scripts/publish_square.mjs --file "<文本文件路径>" [--title "<文章标题>"] [--dry-run]
+币安广场统一推流发布脚本 (复用官方 square-post lib.mjs)
+
+用法:
+  node scripts/publish_square.mjs --text "<内容>" [选项]
+  node scripts/publish_square.mjs --file <文件> [选项]
 
 选项:
-  --text <内容>     直接传入纯文本正文
-  --file <路径>     从指定文件中读取正文（推荐长文或含特殊换行时使用）
-  --title <标题>    长文标题。提供此项时将发布为文章 (contentType: 2)，否则为短动态 (contentType: 1)
-  --dry-run         试运行预览，不实际调用 OpenAPI 发帖
+  --text <内容>      直接传入正文
+  --file <路径>      从文件读取正文
+  --title <标题>     长文标题 (contentType: 2)
+  --images <路径>    逗号分隔的图片路径 (动态配图, 最多4张, 与 --title 互斥)
+  --cover <路径>     文章封面图 (需配合 --title 使用)
+  --dry-run          试运行预览，不实际发帖
 `);
   process.exit(textArg || fileArg ? 0 : 1);
 }
 
+// ---- 输入互斥校验 (对齐官方 post-image.mjs) ----
+if (titleArg && imagesArg) {
+  console.error('错误: 文章模式 (--title) 使用 --cover 设置封面，不支持 --images');
+  process.exit(1);
+}
+
+// ---- 读取正文 ----
 let content = textArg || '';
 if (fileArg) {
   if (!fs.existsSync(fileArg)) {
@@ -66,25 +82,48 @@ if (fileArg) {
   content = fs.readFileSync(fileArg, 'utf8');
 }
 content = content.trim();
-
 if (!content) {
   console.error('错误: 正文内容不能为空');
   process.exit(1);
 }
 
-const contentType = titleArg ? 2 : 1;
-const body = {
-  contentType,
-  bodyTextOnly: content,
-};
-if (titleArg) {
-  body.title = titleArg;
+// ---- Markdown 零容忍清洗 + Cashtag 校验 (移植自 pipeline.mjs) ----
+if (/\*\*|#+\s+|[-*]\s+/.test(content)) {
+  console.warn('[警告] 检测到 Markdown 语法，已自动清洗');
+}
+content = content.replace(/\*\*/g, '').replace(/^#+\s+/gm, '').replace(/^[-*]\s+/gm, '').trim();
+
+const cashtags = [...new Set([...content.matchAll(/\$([A-Za-z0-9]+)/g)].map(m => `$${m[1].toUpperCase()}`))];
+if (cashtags.length > 3) {
+  console.error(`错误: Cashtags 超过平台限制 (最多3个): ${cashtags.join(', ')}`);
+  process.exit(1);
 }
 
-console.log(`\n================ 发帖预览 (${isDryRun ? '试运行 DRY-RUN' : '即将推流'}) ================`);
-if (titleArg) {
-  console.log(`【标题】${titleArg}\n`);
+// ---- 图片文件预检 ----
+const imagePaths = imagesArg ? imagesArg.split(',').map(s => s.trim()).filter(Boolean) : [];
+if (imagePaths.length > 4) {
+  console.error('错误: 最多支持4张配图');
+  process.exit(1);
 }
+for (const p of [...imagePaths, ...(coverArg ? [coverArg] : [])]) {
+  if (!fs.existsSync(p)) {
+    console.error(`错误: 图片文件不存在: ${p}`);
+    process.exit(1);
+  }
+}
+
+// ---- 构建 payload ----
+const contentType = titleArg ? 2 : 1;
+const body = { contentType, bodyTextOnly: content };
+if (titleArg) body.title = titleArg;
+
+// ---- 预览 ----
+console.log(`\n================ 发帖预览 (${isDryRun ? '试运行 DRY-RUN' : '即将推流'}) ================`);
+if (titleArg) console.log(`【标题】${titleArg}\n`);
+if (coverArg) console.log(`【封面图】${coverArg}`);
+if (imagePaths.length) console.log(`【配图】${imagePaths.join(', ')}`);
+console.log(`【Cashtags】${cashtags.length ? cashtags.join(' ') : '(无)'}`);
+console.log(`【字数】${content.length}\n`);
 console.log(content);
 console.log('=====================================================================\n');
 
@@ -93,19 +132,30 @@ if (isDryRun) {
   process.exit(0);
 }
 
-if (!apiKey) {
-  console.error('错误: 未在 .env 中找到有效的 BINANCE_SQUARE_OPENAPI_KEY');
-  process.exit(1);
-}
-
-const maskedKey = apiKey.length <= 9 ? apiKey.slice(0, 2) + '...' : `${apiKey.slice(0, 5)}...${apiKey.slice(-4)}`;
-console.log(`使用广场 API Key: ${maskedKey}`);
-
-const skillLibPath = path.join(__dirname, '..', '.agents', 'skills', 'binance-skills-hub', 'skills', 'binance', 'square-post', 'scripts', 'lib.mjs');
-const { publish, printPublishSuccess } = await import(`file://${skillLibPath.replace(/\\/g, '/')}`);
+// ---- 发布 ----
+const apiKey = resolveApiKey();
+console.log(`使用广场 API Key: ${maskApiKey(apiKey)}`);
 
 try {
-  console.log(`正在推流至币安广场 (类型: ${contentType === 2 ? '文章' : '短动态'})...`);
+  if (titleArg) {
+    // 文章模式：封面图 → cover 字段
+    if (coverArg) {
+      console.log('正在上传文章封面图...');
+      body.cover = await uploadImage(apiKey, coverArg);
+    }
+  } else {
+    // 动态模式：图片 → imageList 字段
+    const targets = imagePaths.length ? imagePaths : (coverArg ? [coverArg] : []);
+    if (targets.length > 0) {
+      console.log(`正在上传配图 (${targets.length} 张)...`);
+      body.imageList = [];
+      for (const img of targets) {
+        body.imageList.push(await uploadImage(apiKey, img));
+      }
+    }
+  }
+
+  console.log(`正在推流至币安广场 (${contentType === 2 ? '文章' : '短动态'})...`);
   const result = await publish(apiKey, body);
   printPublishSuccess(result);
 } catch (err) {
