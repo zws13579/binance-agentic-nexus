@@ -159,6 +159,23 @@ try {
   const result = await publish(apiKey, body);
   printPublishSuccess(result);
 } catch (err) {
-  console.error(`\n发布失败: ${err.message}`);
+  console.error(`\n[❌ API 推流中断] 发布失败: ${err.message}`);
+  console.log('\n================ 币安广场降级容灾方案 ================');
+  console.log('API 调用受阻（Key 额度或接口变动），文案已安全暂存。');
+  console.log('手动发布指引：');
+  if (fileArg) {
+    console.log(`  1. 纯净正文位于: ${fileArg}`);
+  } else {
+    try {
+      const tmpDir = path.join(__dirname, '..', 'tmp');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'draft.txt'), content, 'utf8');
+      console.log('  1. 纯净正文已自动暂存至: tmp/draft.txt');
+    } catch {}
+  }
+  console.log('  2. 浏览器直接访问: https://www.binance.com/zh-CN/square/create');
+  console.log('  3. 粘贴正文内容并确认发布');
+  console.log('  4. 发布完成后清理草稿: rm -f tmp/draft.txt');
+  console.log('=====================================================\n');
   process.exit(1);
 }

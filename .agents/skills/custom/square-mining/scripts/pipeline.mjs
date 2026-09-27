@@ -245,6 +245,29 @@ export async function step2_fetchMarketData(focusSymbols = ['BTC', 'ETH', 'LTC',
     console.warn('  [Warn] CEX 合约费率抓取微弱异常:', err.message);
   }
 
+  // 2.5 CEX 合约微观情绪指标 (多空比、主动买卖量比、未平仓合约量)
+  result.cex.derivativeSentiment = {};
+  const majorDerivSymbols = ['BTC', 'ETH', 'SOL'];
+  for (const sym of majorDerivSymbols) {
+    try {
+      const pair = `${sym}USDT`;
+      const [longShort, takerRatio, oi] = await Promise.all([
+        fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${pair}&period=1h&limit=1`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=${pair}&period=1h&limit=1`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${pair}`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok ? r.json() : {}).catch(() => {})
+      ]);
+
+      const fr = result.cex.fundingRates[sym]?.fundingRate || 'N/A';
+      result.cex.derivativeSentiment[pair] = {
+        symbol: pair,
+        longShortRatio: longShort[0] ? (parseFloat(longShort[0].longAccount) * 100).toFixed(1) + '%' : null,
+        takerBuySellRatio: takerRatio[0] ? takerRatio[0].buySellRatio : null,
+        openInterest: oi && oi.openInterest ? oi.openInterest : null,
+        fundingRate: fr
+      };
+    } catch {}
+  }
+
   // 3. Web3 聪明钱净流入 (复用 crypto-market-rank)
   try {
     const bscInflow = await rankCall(rankCommands['smart-money-inflow']({ chainId: '56' }));
@@ -466,16 +489,29 @@ export async function step5_publishPost(post, { dryRun = false } = {}) {
     payload.title = post.title;
   }
 
-  console.log('正在调用币安广场官方 OpenAPI (/content/add)...');
-  const result = await publish(apiKey, payload);
-  printPublishSuccess(result);
+  try {
+    console.log('正在调用币安广场官方 OpenAPI (/content/add)...');
+    const result = await publish(apiKey, payload);
+    printPublishSuccess(result);
 
-  return {
-    success: true,
-    dryRun: false,
-    id: result.id,
-    shareLink: result.shareLink,
-  };
+    return {
+      success: true,
+      dryRun: false,
+      id: result.id,
+      shareLink: result.shareLink,
+    };
+  } catch (err) {
+    console.error(`\n[❌ API 推流中断] 发布失败: ${err.message}`);
+    console.log('\n================ 币安广场降级容灾方案 ================');
+    console.log('API 调用受阻（Key 额度或接口变动），文案已安全暂存。');
+    console.log('手动发布指引：');
+    console.log('  1. 纯净正文已完成 Markdown 清洗与 Cashtag 规整');
+    console.log('  2. 浏览器直接访问: https://www.binance.com/zh-CN/square/create');
+    console.log('  3. 粘贴正文内容并确认发布');
+    console.log('  4. 发布完成后清理临时草稿: rm -f tmp/draft.txt');
+    console.log('=====================================================\n');
+    throw err;
+  }
 }
 
 export const publishPost = step5_publishPost;
