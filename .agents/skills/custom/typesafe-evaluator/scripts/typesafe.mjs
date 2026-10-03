@@ -17,17 +17,19 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 自动定位项目根目录 .env
+// 自动定位项目根目录 .env (自脚本目录向上逐级遍历至文件系统根目录)
 function findEnvPath() {
   let curr = __dirname;
-  for (let i = 0; i < 5; i++) {
+  while (curr) {
     const candidate = path.join(curr, '.env');
     if (fs.existsSync(candidate)) return candidate;
     const parent = path.dirname(curr);
     if (parent === curr) break;
     curr = parent;
   }
-  return path.resolve(process.cwd(), '.env');
+  const cwdCandidate = path.resolve(process.cwd(), '.env');
+  if (fs.existsSync(cwdCandidate)) return cwdCandidate;
+  return path.resolve(__dirname, '.env');
 }
 
 const envPath = findEnvPath();

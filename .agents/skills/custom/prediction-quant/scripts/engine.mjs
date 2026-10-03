@@ -11,7 +11,7 @@
  * 5. 零 Demo / 零虚构数据原则 (Zero-Demo Guardrail): 严禁内置任何假赛事或模拟盘口，实战必须全量依赖现场实时数据与真实 BAW 接口。
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -128,18 +128,68 @@ export function buildPredictionTradeState({
 }
 
 // =============================================================
-// 2. BAW 接口与命令行通信 (严格直通，无 Mock 拦截)
+// 2. 参数安全校验白名单 (彻底消除命令注入与数据越界)
 // =============================================================
 
-function runBaw(commandStr) {
+const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+export function validateSafeId(val, paramName) {
+  if (val === null || val === undefined) {
+    throw new Error(`缺少必填参数 [${paramName}]`);
+  }
+  const str = String(val).trim();
+  if (!SAFE_ID_REGEX.test(str)) {
+    throw new Error(`参数 [${paramName}] 格式无效或包含非法字符，必须为字母、数字、下划线或短横线`);
+  }
+  return str;
+}
+
+export function validateTokenIds(val) {
+  if (!val) throw new Error('缺少必填参数 [tokenIds]');
+  const list = Array.isArray(val) ? val : String(val).split(',');
+  if (list.length === 0) throw new Error('tokenIds 列表不能为空');
+  const cleanList = list.map(item => {
+    const s = String(item).trim();
+    if (!SAFE_ID_REGEX.test(s)) {
+      throw new Error(`tokenId [${s}] 格式无效或包含非法字符`);
+    }
+    return s;
+  });
+  return cleanList.join(',');
+}
+
+export function validatePositiveNumber(val, paramName, max = 1000000) {
+  const num = Number(val);
+  if (!Number.isFinite(num) || num <= 0 || num > max) {
+    throw new Error(`参数 [${paramName}] 必须为在 (0, ${max}] 范围内的有效有限数值`);
+  }
+  return num;
+}
+
+export function validateInteger(val, paramName, min = 0, max = 1000000) {
+  const num = Number(val);
+  if (!Number.isInteger(num) || num < min || num > max) {
+    throw new Error(`参数 [${paramName}] 必须为在 [${min}, ${max}] 范围内的有效整数`);
+  }
+  return num;
+}
+
+/**
+ * 安全执行 BAW 命令 (使用 execFileSync 数组传参，彻底消除 Shell 注入)
+ * @param {string[]} argsArray 参数数组，如 ['prediction', 'market', 'list', ...]
+ */
+export function runBaw(argsArray) {
+  if (!Array.isArray(argsArray)) {
+    throw new Error('runBaw 必须接收参数数组，严禁拼接 shell 字符串');
+  }
   try {
-    const raw = execSync(`baw ${commandStr}`, {
+    const stdout = execFileSync('baw', argsArray, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 30000,
       env: { ...process.env }
     });
-    return JSON.parse(raw);
+    return JSON.parse(stdout);
   } catch (err) {
     let stdout = err.stdout?.toString() || '';
     let stderr = err.stderr?.toString() || '';
@@ -164,9 +214,20 @@ export async function scanMarkets({
   limit = 20,
   minLiquidity = 1000
 } = {}) {
+  const safeCategory = validateSafeId(l1Category, 'l1Category');
+  const safeLimit = validateInteger(limit, 'limit', 1, 100);
+  const safeMinLiquidity = validatePositiveNumber(minLiquidity, 'minLiquidity', 1e9);
+
   let result;
   try {
-    result = runBaw(`prediction market list --l1Category ${l1Category} --limit ${limit} --sortBy VOLUME --orderBy DESC --json`);
+    result = runBaw([
+      'prediction', 'market', 'list',
+      '--l1Category', safeCategory,
+      '--limit', String(safeLimit),
+      '--sortBy', 'VOLUME',
+      '--orderBy', 'DESC',
+      '--json'
+    ]);
   } catch (err) {
     if (err.message.includes('NOT_LOGGED_IN') || err.message.includes('10003000')) {
       return {
@@ -198,7 +259,7 @@ export async function scanMarkets({
     const isUpcoming = t.startDate && (t.startDate > now && t.startDate < now + 24 * 3600 * 1000);
     const liquidity = parseFloat(t.liquidity || 0);
 
-    if ((isLive || isUpcoming) && liquidity >= minLiquidity) {
+    if ((isLive || isUpcoming) && liquidity >= safeMinLiquidity) {
       for (const m of (t.markets || [])) {
         for (const o of (m.outcomes || [])) {
           candidates.push({
@@ -206,7 +267,7 @@ export async function scanMarkets({
             marketId: m.marketId,
             tokenId: o.tokenId,
             title: `${t.title} - ${o.name}`,
-            game: t.l2Categories?.[0] || l1Category,
+            game: t.l2Categories?.[0] || safeCategory,
             price: parseFloat(o.price || 0),
             chance: parseFloat(o.chance || 0),
             liquidity,
@@ -223,7 +284,7 @@ export async function scanMarkets({
     success: true,
     totalScanned: topics.length,
     candidatesCount: candidates.length,
-    candidates: candidates.slice(0, limit)
+    candidates: candidates.slice(0, safeLimit)
   };
 }
 
@@ -305,12 +366,22 @@ export async function quotePrediction({
   side = 'BUY',
   binanceChainId = 56
 }) {
-  if (!tokenId || !marketTopicId) {
-    throw new Error('必须指定真实的 tokenId 与 marketTopicId 进行链上询价');
-  }
+  const safeTokenId = validateSafeId(tokenId, 'tokenId');
+  const safeTopicId = validateSafeId(marketTopicId, 'marketTopicId');
+  const safeAmount = validatePositiveNumber(amount, 'amount', 100000);
+  const safeSide = String(side).toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+  const safeChainId = validateInteger(binanceChainId, 'binanceChainId', 1, 1e8);
 
-  const cmd = `prediction trade quote --binanceChainId ${binanceChainId} --tokenId ${tokenId} --marketTopicId ${marketTopicId} --side ${side} --amount ${amount} --orderType MARKET --json`;
-  return runBaw(cmd);
+  return runBaw([
+    'prediction', 'trade', 'quote',
+    '--binanceChainId', String(safeChainId),
+    '--tokenId', safeTokenId,
+    '--marketTopicId', safeTopicId,
+    '--side', safeSide,
+    '--amount', String(safeAmount),
+    '--orderType', 'MARKET',
+    '--json'
+  ]);
 }
 
 /**
@@ -329,12 +400,15 @@ export async function executePrediction({
     };
   }
 
-  if (!quoteId) {
-    throw new Error('必须指定现场获取的真实 quoteId 进行链上下单');
-  }
+  const safeQuoteId = validateSafeId(quoteId, 'quoteId');
+  const safeSlippage = validateInteger(slippageBps, 'slippageBps', 0, 5000);
 
-  const cmd = `prediction trade place-order --quoteId ${quoteId} --slippageBps ${slippageBps} --json`;
-  return runBaw(cmd);
+  return runBaw([
+    'prediction', 'trade', 'place-order',
+    '--quoteId', safeQuoteId,
+    '--slippageBps', String(safeSlippage),
+    '--json'
+  ]);
 }
 
 /**
@@ -344,13 +418,15 @@ export async function redeemSettled({
   tokenIds,
   binanceChainId = 56
 }) {
-  if (!tokenIds || (Array.isArray(tokenIds) && tokenIds.length === 0)) {
-    throw new Error('必须指定真实的待赎回 tokenIds');
-  }
+  const safeTokenIds = validateTokenIds(tokenIds);
+  const safeChainId = validateInteger(binanceChainId, 'binanceChainId', 1, 1e8);
 
-  const idsStr = Array.isArray(tokenIds) ? tokenIds.join(',') : tokenIds;
-  const cmd = `prediction trade redeem --tokenIds ${idsStr} --binanceChainId ${binanceChainId} --json`;
-  return runBaw(cmd);
+  return runBaw([
+    'prediction', 'trade', 'redeem',
+    '--tokenIds', safeTokenIds,
+    '--binanceChainId', String(safeChainId),
+    '--json'
+  ]);
 }
 
 // =============================================================
@@ -409,8 +485,32 @@ async function main() {
     }
     console.log('3. [PASS] 人类审批闸门物理拦截校验通过 (未授权操作 100% 阻断)');
 
-    // 算子 4: Jev 官方端点通信探针 (通用探针，无业务假数据)
-    console.log('4. 发起 Jev 官方端点无业务通用连通性探针...');
+    // 算子 4: 命令注入防护与参数白名单校验测试
+    let injectionBlocked = false;
+    try {
+      validateSafeId('esports; touch /tmp/injection_test', 'l1Category');
+    } catch (_) {
+      injectionBlocked = true;
+    }
+    if (!injectionBlocked) {
+      throw new Error('命令注入校验防线失效！');
+    }
+    console.log('4. [PASS] 命令注入防护与参数白名单校验通过 (非法字符 100% 拦截)');
+
+    // 算子 5: runBaw 数组参数强制校验测试
+    let arrayArgEnforced = false;
+    try {
+      runBaw('prediction market list');
+    } catch (_) {
+      arrayArgEnforced = true;
+    }
+    if (!arrayArgEnforced) {
+      throw new Error('runBaw 数组参数强制防线失效！');
+    }
+    console.log('5. [PASS] runBaw 数组传参物理防线校验通过 (严禁拼接 shell 字符串)');
+
+    // 算子 6: Jev 官方端点通信探针 (通用探针，无业务假数据)
+    console.log('6. 发起 Jev 官方端点无业务通用连通性探针...');
     const pingRes = await evaluateSystemOne({
       state: 'Antigravity Prediction-Quant Engine Connectivity Ping',
       questions: {
@@ -422,7 +522,7 @@ async function main() {
     });
     console.log(`   [PASS] Jev 通信成功! 耗时: ${pingRes.metrics.latencyMs}ms, 费用: $${pingRes.metrics.costUsd}`);
 
-    console.log('\n>>> [TEST] 全部测试 100% 通过！零 Demo、零假数据污染。\n');
+    console.log('\n>>> [TEST] 全部测试 100% 通过！零 Demo、零假数据污染、高防注入安全保障。\n');
     process.exit(0);
   }
 
