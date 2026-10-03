@@ -375,7 +375,7 @@ async function main() {
 
 核心指令 (只接受现场真实数据，严禁 Demo 与伪造数据):
   --scan                  扫描现场真实高流动性赛事盘口 (--l1Category esports --limit 5)
-  --evaluate              调用 Jev 执行量化标定与 EV 验算 (--json '...' 或 --file path [--amount <num> 未声明默认 1.0])
+  --evaluate              调用 Jev 执行量化标定与 EV 验算 (--json '...' 或 --file path [--amount <num>] [--model <name>])
   --quote                 向盘口请求精确深度报价 (--tokenId <id> --marketTopicId <id> [--amount <num> 未声明默认 1.0])
   --execute               执行链上下单 (--quoteId <id> --approved) [安全闸门强制拦截未审批操作]
   --redeem                赎回已结算胜出头寸 (--tokenIds <id1,id2>)
@@ -454,7 +454,8 @@ async function main() {
 
     const amountArg = getArg('--amount');
     const stake = amountArg ? parseFloat(amountArg) : null;
-    const evalRes = await evaluateOpportunity(state, { stake });
+    const modelArg = getArg('--model') || null;
+    const evalRes = await evaluateOpportunity(state, { stake, model: modelArg });
     console.log(JSON.stringify(evalRes, null, 2));
     process.exit(0);
   }
