@@ -24,6 +24,9 @@ node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty>
 baw wallet status --json
 node scripts/trade_journal.mjs --summary
 
+# Prediction market quant radar & EV calibration
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs test
+
 # Square mining pipeline (collect data & dry run)
 node .agents/skills/custom/square-mining/scripts/pipeline.mjs --collect
 node scripts/publish_square.mjs --file tmp/draft.txt --dry-run
@@ -35,10 +38,9 @@ node scripts/publish_square.mjs --file tmp/draft.txt --dry-run
 - `scripts/binance_client.mjs` — ESM compatibility bridge for modern modules
 - `scripts/futures_scanner.mjs` — Lightweight multi-factor breakout radar (USDT-M Futures)
 - `scripts/trade_journal.mjs` — Confidential audit trade logger (strictly disabled by default in .env)
-- `scripts/typesafe.mjs` — TypeSafe AI System One structured judgment CLI
 - `scripts/publish_square.mjs` — Square content publisher with Browser Fill fallback
 - `scripts/proxy_bootstrap.mjs` — Port-proxy bootstrap fallback
-- `.agents/skills/` — Skill system root (binance-skills-hub, custom, typesafe-ai)
+- `.agents/skills/` — Skill system root (binance-skills-hub, custom, typesafe-ai; includes `prediction-quant`, `typesafe-evaluator`)
 - `.env` — Credentials (see variable list below; NEVER echo values)
 
 ## Environment Variables (.env)

@@ -34,9 +34,9 @@ npm install -g @binance/agentic-wallet@latest
 
 ### 可选：TypeSafe AI 结构化判定
 
-- 本项目核心功能不强依赖 TypeSafe
-- 若需启用外部第三方/官方 System One 结构化裁决，只需在 `.env` 中补充 `TYPESAFE_API_KEY`（及可选的 `TYPESAFE_ENDPOINT`）
-- 若拉取其官方说明，放于 `.agents/skills/typesafe-ai` 即可
+- 本项目核心功能不强依赖 TypeSafe；内置代码级确定性 Mock 引擎（`--mock`），无 Key 或离线状态下自动优雅降级，保障 0 成本单测与确定性兜底
+- 若需启用外部真实 System One 结构化裁决，只需在 `.env` 中补充 `TYPESAFE_API_KEY`（默认且唯一标准模型别名绑定 `jev-latest`，支持通过 `TYPESAFE_MODEL` 与 `TYPESAFE_ENDPOINT` 自定义）
+- 若拉取其官方说明，放于 `.agents/skills/typesafe-ai` 即可；业务自研决策器位于 `.agents/skills/custom/typesafe-evaluator`
 
 ### 日常官方 Skills 更新
 

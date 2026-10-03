@@ -32,6 +32,7 @@
 │           └── trading-signal/                # 链上聪明钱单笔交易信号与跟单分析
 │
 ├── custom/                            # 【自行研发与编排 Skills】（独立维护，永不冲突）
+│   ├── prediction-quant/              # 预测市场高确定性量化决策与执行工作流 (工业级特征工程)
 │   ├── square-mining/                 # 广场「内容挖矿」五步自动化全链路工作流
 │   └── typesafe-evaluator/            # TypeSafe 业务决策与风控裁决器（情景自发触发）
 │
@@ -73,17 +74,30 @@ git submodule update --init --recursive
 
 ---
 
-## 二、第三方独立 Skills 说明（可选扩展 / Optional）
+## 二、自研核心技能说明 (Custom Skills)
+
+### [`custom/prediction-quant`](./custom/prediction-quant/SKILL.md)
+* **定位**：预测市场高确定性量化决策与执行闭环工作流。
+* **架构精髓**：基于工业级量化模型规范，集成欧赔去水算子（Pinnacle 尖头盘）、结构化特征工程（TradeState）、`inputs` 权重引导与事前硬风控包络线。
+* **执行中枢**：[`scripts/engine.mjs`](./custom/prediction-quant/scripts/engine.mjs)，包含扫盘过滤、Jev System One 胜率标定与 EV 测算、链上深度询价（BAW Quote）、强制人类审批闸门（Approval Gate）与赛后批量赎回（Redeem）。
+
+### [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md)
+* **定位**：TypeSafe AI (System One) 业务决策与风控裁决器。
+* **执行中枢**：[`scripts/typesafe.mjs`](./custom/typesafe-evaluator/scripts/typesafe.mjs)（默认模型 `jev-latest`，完全由 `.env` 中的 `TYPESAFE_API_KEY` 与 `TYPESAFE_MODEL` 驱动，具备本地 Pre-flight 静态自愈与确定性 Mock 引擎）。
+
+---
+
+## 三、第三方独立 Skills 说明（可选扩展 / Optional）
 
 ### [`typesafe-ai`](./typesafe-ai/skills/typesafe-ai/SKILL.md)
 * **性质**：可选扩展项（已注册为独立 Git Submodule，非强制基础依赖；若未配置 Key，系统自动降级为内置模型推理，不阻断主流程）。
 * **来源**：[typesafe-ai/skills (GitHub)](https://github.com/typesafe-ai/skills)（完全保持官方 submodule 纯净，通过 `git submodule update` 直接同步上游）。
 * **定位**：TypeSafe System One 模型（如 Jev）的结构化判断底层概念与编程原语。
-* **业务联动**：在业务场景中由自研技能 [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md) 依据情境自发触发，通过 [`scripts/typesafe.mjs`](../../scripts/typesafe.mjs) 纯原生调用（完全由 `.env` 中的 `TYPESAFE_API_KEY` 与 `TYPESAFE_ENDPOINT` 驱动，支持任意第三方中转站/反向代理）。
+* **业务联动**：在业务场景中由自研技能 [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md) 与 [`custom/prediction-quant`](./custom/prediction-quant/SKILL.md) 依据情境调度。
 
 ---
 
-## 三、Antigravity 自动发现配置
+## 四、Antigravity 自动发现配置
 
 在根目录 [`.agents/skills.json`](../skills.json) 中已注册多路径扫描入口：
 ```json
