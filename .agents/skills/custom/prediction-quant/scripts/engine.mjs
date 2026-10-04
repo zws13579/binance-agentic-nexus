@@ -455,6 +455,7 @@ async function main() {
   --quote                 向盘口请求精确深度报价 (--tokenId <id> --marketTopicId <id> [--amount <num> 未声明默认 1.0])
   --execute               执行链上下单 (--quoteId <id> --approved) [安全闸门强制拦截未审批操作]
   --redeem                赎回已结算胜出头寸 (--tokenIds <id1,id2>)
+  --auto-redeem           自动巡检并一键赎回所有已结算获胜头寸
   test                    纯数学公式与安全闸门无业务单测 (零假数据)
     `);
     process.exit(0);
@@ -602,6 +603,25 @@ async function main() {
     }
 
     const redRes = await redeemSettled({ tokenIds: tokenIds.split(',') });
+    console.log(JSON.stringify(redRes, null, 2));
+    process.exit(redRes.success ? 0 : 1);
+  }
+
+  // 7. 自动巡检与一键赎回 Auto-Redeem
+  if (hasFlag('--auto-redeem')) {
+    const listRes = runBaw(['prediction', 'position', 'list', '--tab', 'PENDING_CLAIM', '--json']);
+    if (!listRes.success) {
+      console.error('查询可赎回持仓失败:', listRes.error);
+      process.exit(1);
+    }
+    const claimable = listRes.data?.positions || [];
+    if (claimable.length === 0) {
+      console.log(JSON.stringify({ success: true, message: '当前没有待领取的胜场奖金 (0 claimable positions)', count: 0 }, null, 2));
+      process.exit(0);
+    }
+    const tokenIds = claimable.map(p => p.tokenId).filter(Boolean);
+    console.log(`[Auto-Redeem] 检测到 ${tokenIds.length} 笔获胜待领取头寸，正在执行批量自动赎回...`);
+    const redRes = await redeemSettled({ tokenIds });
     console.log(JSON.stringify(redRes, null, 2));
     process.exit(redRes.success ? 0 : 1);
   }
