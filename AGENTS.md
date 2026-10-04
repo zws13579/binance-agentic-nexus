@@ -47,7 +47,7 @@ node scripts/publish_square.mjs --file tmp/draft.txt --dry-run
 
 Variables only — values are NEVER printed:
 `BINANCE_API_KEY`, `BINANCE_SECRET_KEY`, `BINANCE_API_ENV`, `HTTP_PROXY`, `HTTPS_PROXY`,
-`BINANCE_CHAIN_ID`, `BINANCE_SQUARE_OPENAPI_KEY`, `ENABLE_TRADE_JOURNAL`
+`BINANCE_CHAIN_ID`, `BINANCE_SQUARE_OPENAPI_KEY`, `ENABLE_TRADE_JOURNAL`, `BINANCE_INSTANCE_ID`
 
 ## Guardrails
 
