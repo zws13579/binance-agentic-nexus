@@ -1,6 +1,6 @@
 # 结构化提示词与特征工程指南 (Prompt & Feature Engineering Guide)
 
-本文档为 `prediction-quant` 提供标准特征和可选 Jev 的问题构造指南。Agent 先据现场数据生成 agentAssessment；.env 无 API Key 时只用 Agent 分析。有 Key 时 Jev 复核相同证据，输入中剔除 Agent 的原始概率与执行许可，分别保存双方意见，不自动平均加权。
+本文档为 `prediction-quant` 提供标准特征和可选 Jev 的问题构造指南。长任务由子 Agent 搜索事实和反证，主 Agent 核查来源、时间和选项映射后生成 agentAssessment；.env 无 API Key 时继续 Agent 协作。有 Key 时 Agent 根据当前概率/风险情景自主调用 Jev 复核相同证据，输入中剔除 Agent 的原始概率与执行许可，分别保存双方意见，不自动平均加权。
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### 原则一：严密特征工程 (Feature-Engineered State)
 * **严禁**：直接把整篇赛事战报或推特大段文本扔进 `state`，这会导致 Token 消耗激增、注意力分散和概率漂移。
-* **推荐**：由当前 Agent 或采集脚本将证据提炼为结构化数字，保留来源和时间；不要求子代理：
+* **推荐**：硬数据由 API/采集脚本提供；长任务的情报搜索与反证核查交给使用新上下文的子 Agent。主 Agent 将证据提炼为结构化字段，保留来源、时间和不确定性；没有依据的风险或情绪分数保持未知：
   * `impliedProb`：盘口当前代币买入价格对应的隐含胜率（如 0.60）。
   * `sharpBookmaker.dejuicedProb`：独立赔率来源去水后的概率基准；它是外部基准，不应宣称为已知的真实胜率。
   * 独立基准同时需要 `source`、`observedAt`、`targetOutcome`、`opponentOutcome`，并与待评估选项匹配。

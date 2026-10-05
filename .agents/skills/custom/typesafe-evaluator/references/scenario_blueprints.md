@@ -2,7 +2,7 @@
 
 本文档归属于自研技能 [`typesafe-evaluator`](../SKILL.md)，仅定义 CEX 量化风控与 Web3 预测市场概率估计的**字段类型与层级规范 (Abstract Schema)**。
 
-仅在启用可选 Jev 时使用这些请求模板。项目 .env 无 API Key 时由当前 Agent 继续常规分析与经批准的交易；预测市场使用 engine.mjs 的 agentAssessment 契约，不必构造 Jev 请求。
+项目 .env 有 API Key 时，Agent 根据当前情景自主选用这些请求结构，动态构造 state、instructions 与 criteria，无需用户每次点名 Jev。长任务使用可用子 Agent 搜索和独立核查，主 Agent 汇总证据。无 API Key 时继续 Agent 协作分析与经批准的交易；预测市场使用 engine.mjs 的 agentAssessment 契约，不构造 Jev 请求。
 
 > [!CAUTION]
 > **防降智铁律：本文档绝不包含任何具体比赛、代币或赔率的 Demo 假数据！**

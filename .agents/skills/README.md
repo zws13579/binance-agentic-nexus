@@ -34,7 +34,7 @@
 ├── custom/                            # 【自行研发与编排 Skills】（独立维护，永不冲突）
 │   ├── prediction-quant/              # 预测市场概率评估、EV 状态与执行审批工作流
 │   ├── square-mining/                 # 广场「内容挖矿」五步自动化全链路工作流
-│   └── typesafe-evaluator/            # 可选 TypeSafe 结构化第二意见
+│   └── typesafe-evaluator/            # 情景自主触发的 TypeSafe 分析（配置可选）
 │
 ├── typesafe-ai/                       # 【Git Submodule: 第三方开源官方技能（可选扩展 / Optional）】
 │   │                                  # Upstream: https://github.com/typesafe-ai/skills.git
@@ -77,12 +77,12 @@ git submodule update --init --recursive
 ## 二、自研核心技能说明 (Custom Skills)
 
 ### [`custom/prediction-quant`](./custom/prediction-quant/SKILL.md)
-* **定位**：Agent 主导的预测市场评估、毛/净 EV 和人工审批；Jev 为可选第二意见，Agent/Jev 概率均为未校准估计。
-* **架构精髓**：标准 CLI/JSON，auto/agent/jev 三种模式；.env 无 Key 直接使用 Agent 分析。有独立锚点时模型调整限制在 ±5 个百分点；缺失数据保持未知，Mock 仅供测试。
+* **定位**：主 Agent 编排、子 Agent 搜索与独立复核的预测市场工作流，包含毛/净 EV 和人工审批；有 Key 时自主调用 Jev，Agent/Jev 概率均为未校准估计。
+* **架构精髓**：协作适配当前客户端，长任务传递最小快照并隔离上下文；业务使用标准 CLI/JSON 与 auto/agent/jev 三种模式。.env 无 Key 使用 Agent 分析。有独立锚点时模型调整限制在 ±5 个百分点；缺失数据保持未知，Mock 仅供测试。
 * **执行中枢**：[`scripts/engine.mjs`](./custom/prediction-quant/scripts/engine.mjs)，包含成对 outcome 评估、只读历史评分、BAW 深度询价、强制人类审批与赛后批量赎回。
 
 ### [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md)
-* **定位**：可选 TypeSafe AI (System One) 结构化复核，未配置不妨碍 Agent 分析和经批准的交易。
+* **定位**：Agent 根据概率、风险、异常、证据冲突和分类/评分需求自主调用 TypeSafe AI (System One)，动态构造判断问题；配置可选，无 Key 时继续 Agent 分析和经批准的交易。长任务使用可用子 Agent 搜索与独立核查。
 * **执行中枢**：[`scripts/typesafe.mjs`](./custom/typesafe-evaluator/scripts/typesafe.mjs)（默认模型 `jev-latest`，完全由 `.env` 中的 `TYPESAFE_API_KEY` 与 `TYPESAFE_MODEL` 驱动，具备本地 Pre-flight 静态自愈与确定性 Mock 引擎）。
 
 ---
@@ -99,7 +99,7 @@ git submodule update --init --recursive
 
 ## 四、技能发现与跨客户端使用
 
-支持技能自动发现的客户端可读取下列目录索引；其他客户端直接读取 SKILL.md 并运行 CLI。业务流程不依赖某个客户端的自动发现机制或专有工具。
+支持技能自动发现的客户端可读取下列目录索引；其他客户端直接读取 SKILL.md 并运行 CLI。长任务的子 Agent 搜索与上下文隔离使用当前客户端可用的协作能力，迁移时适配工具接口；业务 CLI/JSON 保持通用。有 Key 时 Agent 按情景自主调用 Jev，无 Key 时继续协作分析。
 
 在根目录 [`.agents/skills.json`](../skills.json) 中已注册多路径扫描入口：
 ```json

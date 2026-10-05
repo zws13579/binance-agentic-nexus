@@ -1,15 +1,27 @@
 ---
 name: typesafe-evaluator
 description: >-
-  Optional TypeSafe System One (Jev) structured second opinion for Web3/CEX probability,
-  categorical and risk judgments. Use when Jev is configured or explicitly requested.
-  Without a project .env API key, the host Agent continues the normal analysis and
-  approved trading workflow. Portable Node.js CLI/JSON; no harness-specific tools.
+  Autonomously use configured TypeSafe System One (Jev) for context-specific Web3/CEX
+  probability estimates, trading risk, anomaly judgments, categorical choices and
+  graded scores. The Agent dynamically builds state, instructions and criteria
+  without waiting for the user to name Jev. With no project .env API key, continue
+  Agent analysis and approved trading. Use fresh-context subagents for long research
+  and evidence checks, adapting to the available harness.
 ---
 
 # TypeSafe Evaluator (System One 业务决策裁决器)
 
 本 Skill 为 BAN 提供可选的结构化第二意见，默认模型为 `jev-latest`。Agent 负责现场分析与用户沟通，代码负责算术和执行闸门。Jev 的意见不构成交易授权。
+
+## 情景自主触发
+
+项目 .env 有 Key 时，Agent 主动识别并调用以下情景，无需用户点名 Jev 或逐次批准分析调用：
+
+- 预测市场事件/选项概率估计与候选动作比较；
+- CEX/Web3 开仓、平仓等交易风险判断，以及风险异常、冲突证据复核；
+- 需要 Choice 离散选择、Noul 条件概率或 Score 分级评分的判断。
+
+每次从现场数据动态构建 state、instructions 和 criteria；先确定要回答的问题，再选择题型。预测市场调用 engine.mjs --evaluate 的 auto 模式，其他场景使用本 Skill 的通用 CLI。单纯行情读取、确定性计算、格式检查无需模型分析。已配置表示 Jev 分析可用，具体调用由情景驱动；交易授权仍按对应工作流的人类审批要求执行。
 
 项目根目录 `.env` 中未配置非空 `TYPESAFE_API_KEY` 时不使用 Jev；客户端继承的进程级 Key 不会启用它。预测市场应使用 `engine.mjs --evaluate` 的默认 auto 模式，由当前 Agent 填写 agentAssessment 继续。直接调用本 Skill 的真实 API 功能仍会如实报告缺 Key。
 
@@ -88,15 +100,16 @@ description: >-
 
 ## 二、实战推理与防幻觉四大防线 (Anti-Hallucination Guidelines)
 
-在长时间（超 1000 步）对话中，为防止长上下文污染与 Agent 幻觉向 Jev 投毒，严格执行以下四道物理防线：
+长任务、多来源调查和上下文持续累积时，执行以下四项检查，减少错误证据进入 Jev；无需等到固定对话步数：
 
 1. **硬数据代码直通（Zero-LLM Touching）**：
    * 盘口价、订单薄深度、外网去水胜率、持仓量、滑点等纯数字，必须由脚本直接通过 API 读取并写入 JSON，严禁主 Agent 在对话里进行二次口算估算；
 2. **软数据保留凭证与不确定性**：
    * 针对新闻、变阵、替补等非结构化情报，必须附带一手来源引用；无确凿证据时标记为未知，不要用 roster_risk: 0.0 代替缺失；
    * 解释每项证据影响估计的方向与依据；不把传闻当作事实，也不将提示词中的优先级宣称为已验证的数值权重；
-3. **重新核对证据**：
-   * 长上下文中重新读取事实来源与采集时间，并缩减输入到当前问题相关的数据。单个 Agent 即可执行；工作流不依赖特定客户端的子代理、记忆或审批工具；
+3. **子 Agent 搜索与上下文隔离**：
+   * 长任务、上下文已大量累积、多来源调查或关键事实冲突时，使用当前客户端的子 Agent 能力开展搜索和独立核查。传递最小任务快照、事实来源及判定目标，使用新的上下文；主 Agent 汇总并核对引用、时间和结论差异；
+   * 不固定客户端工具名称。能力缺失时如实说明，按来源分段重查；未取得必要证据前保留未知或暂缓结论，不将单上下文分析声称为独立核查；
 4. **决策看板原始数据穿透**：
    * 呈报人类审批时并列呈现原始事实、Agent 判断与可选 Jev 估计，标注来源与分歧，禁止把模型概率称为已校准胜率。
 

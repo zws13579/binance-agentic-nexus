@@ -1,11 +1,11 @@
 ---
 name: prediction-quant
-description: Binance Web3 预测市场工作流。Agent 分析、可选 Jev 复核、独立赔率基准、毛/净 EV、只读历史评分、BAW 询价与人工审批；基于通用 CLI/JSON，适用于不同 Agent 和 harness。
+description: Binance Web3 预测市场工作流。主 Agent 编排、子 Agent 搜索与上下文隔离、根据情景自主调用已配置的 Jev、独立赔率基准、毛/净 EV、只读历史评分与人工审批；通过通用 CLI/JSON 和客户端可用能力跨 harness 执行。
 ---
 
 # 预测市场评估与执行
 
-Agent 负责采集现场证据、比较选项和向用户解释判断；确定性代码负责概率限幅、EV、成本与执行约束；Jev 是可选的结构化复核。两种模型的概率在历史验证前均为未校准估计。
+主 Agent 编排任务、核对证据、比较选项和向用户解释判断；长任务中的搜索与独立核查交给具有新上下文的子 Agent。确定性代码负责概率限幅、EV、成本与执行约束。配置 Jev 后，Agent 根据情景自主调用它进行结构化分析；没有 Key 时由 Agent 团队继续完成分析。两种模型的概率在历史验证前均为未校准估计。
 
 ## Jev 开关与配置
 
@@ -14,10 +14,11 @@ Agent 负责采集现场证据、比较选项和向用户解释判断；确定�
 - 地址优先级：`TYPESAFE_ENDPOINT` > `TYPESAFE_BASE_URL` 去除末尾斜杠后加 `/systemone` > 官方 `https://api.typesafe.ai/v1/systemone`。模型默认 `jev-latest`，保留 `TYPESAFE_MODEL`。
 - 仅配置地址、或 harness 注入进程级 API Key，都不会启用 Jev。不要打印真实凭证。
 - 无 Jev 时，扫描、Agent 评估、询价、人工批准后的交易和赎回均可继续。缺少 Agent 分析时，补充真实分析再评估，不制造替代概率。
+- 已配置 Key 时，事件概率、入场风险、相互矛盾的证据或候选动作比较等情景自动触发 Jev 分析，无需用户额外指定“调用 Jev”。预测市场常规评估使用默认 auto 模式；直接行情读取和确定性算术由代码完成。
 
 ## 标准 CLI
 
-所有命令从项目根目录运行；切换客户端只需读取本 Skill 并执行标准 Node.js CLI，无需专有工具、插件或子代理接口。
+所有命令从项目根目录运行。搜索编排使用当前客户端提供的子 Agent 能力，业务评估与执行使用标准 Node.js CLI/JSON；规则描述分工与输入输出，不固定某个客户端的工具名称。
 
 ```bash
 # 扫描真实市场；每个市场保留所有 outcomes
@@ -49,10 +50,12 @@ node .agents/skills/custom/prediction-quant/scripts/engine.mjs --redeem --tokenI
 
 ## 工作步骤
 
-1. **获取证据**：通过真实 BAW/API 读取价格、流动性、持仓、资金和限额，查阅带来源/时间的赛事信息。扫描输出保留 marketTopicId（topicId 兼容别名）、marketTitle 和 question，区分比赛胜者、单局胜者与大小盘；已关闭市场被排除，流动性使用子市场自身数值，不能用事件总流动性替代。根据当前客户端的可用能力搜集；单个 Agent 即可完成，不依赖子代理。无法取得的数据留为未知。BAW 未登录则如实提示认证，业务路径不使用 Demo/Mock。
-2. **先做 Agent 分析**：中立比较市场的所有 outcomes，为每侧填写 `agentAssessment`（见下方契约）。可选择 `enter`、`pass` 或 `reject`。所有概率必须基于现场证据；算术交由引擎。
-3. **运行评估**：普通组合为 Agent + Jev。Jev 只接收证据，不接收 Agent 的概率或执行权限，减少意见互相影响。输出保留双方原始意见；暂不混合加权。采用 Jev 时，最终概率取 Jev 估计并在存在独立锚点时限幅；Agent-only 采用 Agent 估计并遵守相同限幅。
+1. **扫盘与子 Agent 搜索**：通过真实 BAW/API 读取价格、流动性、持仓、资金和限额。扫描输出保留 marketTopicId（topicId 兼容别名）、marketTitle 和 question，区分比赛胜者、单局胜者与大小盘；已关闭市场被排除，流动性使用子市场自身数值。涉及长任务、多市场、多来源、阵容/疲劳/战报情报或证据冲突时，使用客户端可用的子 Agent 分别搜索事实和反证，以新上下文核查来源与时间。主 Agent 提供最小任务快照并汇总复核，不把整段历史灌入子 Agent。无法取得的数据留为未知；BAW 未登录则如实提示认证，业务路径不使用 Demo/Mock。
+2. **汇总证据并做 Agent 分析**：主 Agent 校验子 Agent 返回的赛事、合约、选项映射、引用和采集时间，区分事实、推测、冲突与缺失。中立比较所有 outcomes，为每侧填写 `agentAssessment`；选择 `enter`、`pass` 或 `reject`。上下文过长或分析出现重复、冲突时，启用新上下文子 Agent 重新核查，再形成主 Agent 判断。算术交由引擎。
+3. **按情景自主调用 Jev**：普通组合为 Agent + Jev；有 Key 的事件概率与风险评估默认使用 auto 模式，无需用户再次指定。Agent 动态构建当前情景的 state、instructions 和 criteria；CEX/Web3 的 Choice、Noul、Score 判定按 typesafe-evaluator 的触发规则执行。Jev 只接收证据，不接收 Agent 的概率或执行权限。输出保留双方意见；暂不混合加权。最终采用所选 provider 的概率，有独立锚点时限幅。
 4. **呈报与授权**：展示概率来源、未校准状态、毛/净 EV、缺失数据和双方分歧。询价确认实际成本/报价有效期后，用户批准具体选项和金额，才执行 `--approved`。批准之后若报价或金额改变，重新核对授权范围。执行前检查同场已有和在途订单，避免互斥方向重复下注；成功提交不等于已成交，按 BAW 返回状态核对。
+
+子 Agent 搜索须返回来源 URL、发布/采集时间、事件与选项标识、事实摘录、推断依据及未知项；主 Agent 复核关键证据，不能只消费一个无来源的评分。客户端确实没有子 Agent 能力时，公开该限制，按独立来源分段调查；缺乏必要独立核查的结论选择 pass 或等待补充证据，不冒称已完成多人验证。详细分工见 [工作流设计](../../../../docs/prediction-workflow.md)。
 
 ## Agent 输入与输出契约
 

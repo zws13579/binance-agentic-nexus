@@ -1,6 +1,6 @@
 # 预测市场：Agent 主导与可选 Jev
 
-本项目的业务接口是 Node.js CLI、标准输入/输出和 JSON。更换 Agent 或 harness 后，读取 AGENTS.md 与 prediction-quant/SKILL.md 即可继续；不需要特定客户端的工具名称、记忆服务、子代理接口或会话 ID。
+本项目的业务接口是 Node.js CLI、标准输入/输出和 JSON。主 Agent 负责组织任务、汇总证据和形成决策，长任务使用子 Agent 搜索和独立复核。更换 Agent 或 harness 后，读取 AGENTS.md 与 prediction-quant/SKILL.md，并将协作步骤映射到当前客户端提供的能力；业务数据契约保持一致，文档不固定工具名称或会话 ID。
 
 ## 配置与模式
 
@@ -9,7 +9,7 @@
 | 模式 | Jev 配置 | 行为 |
 | --- | --- | --- |
 | auto（默认） | 无 Key | 使用当前 Agent 的 agentAssessment，不请求 Jev |
-| auto | 有 Key | 通常由 Agent 提供事实和分析，Jev 做第二意见 |
+| auto | 有 Key | 主 Agent 汇总已核查的证据，自主调用 Jev 做第二意见 |
 | agent | 任意 | 使用 Agent 分析，不调用 Jev |
 | jev | 有 Key | 要求 Jev 成功返回合法结果 |
 | jev | 无 Key | 返回 jev_disabled，调用方可选择 auto/agent |
@@ -22,6 +22,26 @@
 
 地址与模型同名配置仍支持进程变量优先于 .env；Key 只认项目文件。模型默认 jev-latest，可通过 TYPESAFE_MODEL 或评估的 --model 修改。Jev 请求默认期限 15 秒，--timeout-ms 可设置 1 到 120000ms。
 
+## 子 Agent 搜索与长任务上下文隔离
+
+长任务、多市场扫描、多来源调查、阵容与疲劳情报搜索或关键证据冲突时，主 Agent 应使用当前客户端可用的子 Agent 能力。纯行情读取、确定性计算和短小编辑可直接执行。
+
+1. 主 Agent 先确定事件、具体合约、选项、结算规则与分析时点。按独立来源或问题拆分搜索任务，分别调查事实、反证和风险；避免让每个子 Agent 重复完整任务。
+2. 给子 Agent 最小任务快照：待核实的问题、事件/选项标识、时间范围、已知证据和交付要求。研究与独立复核使用新的上下文，不复制主 Agent 的长篇历史或把初步方向作为既定结论。
+3. 子 Agent 返回来源 URL、发布时间、采集时间、事实摘录、事件/选项映射、推断依据、冲突与未知项。不得用无来源的评分替代证据，或把未找到信息解释为风险为零。
+4. 主 Agent 核对关键引用、信息时效和结算条件，汇总双方证据后形成 agentAssessment。长任务按阶段整理简短事实快照；上下文累积、重复推理或结论冲突时，交给新的子 Agent 独立复核。
+5. 客户端没有子 Agent 能力时如实披露限制，按独立来源分段调查。必要核查尚未完成时保留未知、选择 pass 或等待补充证据，不声称完成了多人验证。
+
+子 Agent 的数量和分工随任务变化；使用客户端实际提供的协作接口，不依赖某个 Agent 的专有工具名称。子 Agent 的意见与 Jev 判断都需要由主 Agent 核对证据，不能保证消除幻觉。
+
+## 按情景自主调用 Jev
+
+配置 Jev 后，主 Agent 根据问题自主决定调用方式，无需用户每次点名。预测市场的概率估计与候选比较通常使用 engine.mjs 默认 auto 模式；CEX/Web3 的入场或退出风险、异常信号及证据冲突需要结构化第二意见时，使用 typesafe-evaluator 的通用 CLI。
+
+Agent 从当前证据构造 state、instructions 与 criteria，并按判断类型选择 Choice、Noul 或 Score；说明问题、目标、依据和未知项。直接读取行情、确定性算术或格式检查不需要模型。子 Agent 搜索提供事实，Jev 评估已提供的事实，两者承担不同步骤。
+
+.env 无 Key 时跳过 Jev，主 Agent 与可用子 Agent 继续分析、询价及经批准的交易；Jev 不是交易前置条件。显式 provider=agent 仍可用于用户选择的 Agent 分析。模型分析与真实交易授权分开，实际执行继续要求人类审批。
+
 ## 统一数据契约
 
 ```bash
@@ -32,7 +52,7 @@ node .agents/skills/custom/prediction-quant/scripts/engine.mjs --evaluate --prov
 
 输入仍兼容原有 state；额外的 agentAssessment 含事件、市场、选项标识、probability、action（enter/pass/reject）、source、evaluatedAt 和 rationale。可附 expiresAt；过期时要求重新分析。Agent-only 模式必须提供真实 Agent 分析；程序不在本地生成或假装调用新的 Agent。若缺分析，返回 agent_assessment_required 和输入契约指引。
 
-普通组合中，Agent 整理同一份现场证据并形成自己的意见；Jev 请求排除 agentAssessment 与 allowed，降低先前意见和执行权限对概率判断的干扰。输出分别保留原始 Agent/Jev 概率、方向和来源。最终采用所选 provider 的概率，有独立赔率时限制在锚点 ±5 个百分点；暂不平均或学习权重。所有估计均为 calibrated=false。
+普通组合中，主 Agent 汇总并核对搜索证据，形成自己的意见；Jev 请求排除 agentAssessment 与 allowed，降低先前意见和执行权限对概率判断的干扰。输出分别保留原始 Agent/Jev 概率、方向和来源。最终采用所选 provider 的概率，有独立赔率时限制在锚点 ±5 个百分点；暂不平均或学习权重。所有估计均为 calibrated=false。
 
 Agent 的 pass/reject 不会被 Jev 的入场意见覆盖。若 Agent 判断改变，应基于更新的证据重新评估，不能为了通过检查删除否定意见。
 
@@ -50,6 +70,8 @@ Agent 的 pass/reject 不会被 Jev 的入场意见覆盖。若 Agent 判断改�
 
 | 设计 | 行为 |
 | --- | --- |
+| 子 Agent 搜索与复核 | 长任务分配独立调查，传递最小快照，主 Agent 核对来源与冲突 |
+| 情景自主调用 | 有 Key 时依据当前概率/风险问题构造 Jev 请求；无 Key 继续 Agent 协作 |
 | 可选评估来源 | provider=auto/agent/jev，统一输入与评估输出 |
 | 判断与执行分离 | 保留原始模型意见，单独输出执行资格；订单提交后按 BAW 状态核对 |
 | 请求期限与信息时效 | Jev 请求设定超时；Agent 分析支持显式过期时间 |

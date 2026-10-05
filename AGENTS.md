@@ -71,8 +71,9 @@ Variables only — values are NEVER printed:
 ### CLI & Network
 - Dynamically check `baw` via `baw --version`; TUN mode is default (native run); port-proxy mode is fallback only
 - Anti-Duplication: ALWAYS check existing Skills and scripts before building anything new
-- Harness portability: use standard CLI/JSON; no mandatory client-specific tools or subagents
-- Jev is optional: no non-empty TYPESAFE_API_KEY in project .env means Agent-only; approval rules still apply
+- Harness portability: use CLI/JSON and adapt orchestration to available client capabilities
+- Long research: use available subagents for parallel search and fresh-context verification
+- Jev: with project .env key, autonomously use for relevant probability/risk judgments; without key, use Agent
 
 ## Deep Dive Docs (read on demand)
 
