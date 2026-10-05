@@ -9,7 +9,7 @@ description: >-
 
 # 币安广场【内容挖矿】解耦工作流 (Square Mining Workflow)
 
-本技能按照 Google Antigravity 官方技能规范设计，采用**数据采集、AI 大脑创作、接口推流三层解耦架构**。
+本技能通过通用 CLI 与文件接口运行，采用**数据采集、Agent 创作、接口推流三层解耦架构**，适用于不同 Agent 和 harness。
 
 > [!IMPORTANT]
 > **绝对准则：严禁将文案或文章硬编码在脚本文件中！**  

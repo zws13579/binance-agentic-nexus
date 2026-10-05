@@ -71,6 +71,8 @@ Variables only — values are NEVER printed:
 ### CLI & Network
 - Dynamically check `baw` via `baw --version`; TUN mode is default (native run); port-proxy mode is fallback only
 - Anti-Duplication: ALWAYS check existing Skills and scripts before building anything new
+- Harness portability: use standard CLI/JSON; no mandatory client-specific tools or subagents
+- Jev is optional: no non-empty TYPESAFE_API_KEY in project .env means Agent-only; approval rules still apply
 
 ## Deep Dive Docs (read on demand)
 
@@ -79,6 +81,7 @@ Variables only — values are NEVER printed:
 - `docs/sop-web3-wallet.md` — Web3 wallet operations SOP
 - `docs/troubleshooting.md` — API error codes, rate limits & network troubleshooting
 - `docs/setup-guide.md` & `docs/network-proxy.md` — Cross-environment deployment & proxy guide
+- `docs/prediction-workflow.md` — Agent analysis, optional Jev, portable contract & configuration
 
 ## Agent Checklist
 

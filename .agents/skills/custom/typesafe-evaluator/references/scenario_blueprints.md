@@ -1,11 +1,13 @@
 # TypeSafe System One (Jev) 量化字段 Schema 规范
 
-本文档归属于自研技能 [`typesafe-evaluator`](../SKILL.md)，仅定义 CEX 量化风控与 Web3 预测市场胜率校准的**字段类型与层级规范 (Abstract Schema)**。
+本文档归属于自研技能 [`typesafe-evaluator`](../SKILL.md)，仅定义 CEX 量化风控与 Web3 预测市场概率估计的**字段类型与层级规范 (Abstract Schema)**。
+
+仅在启用可选 Jev 时使用这些请求模板。项目 .env 无 API Key 时由当前 Agent 继续常规分析与经批准的交易；预测市场使用 engine.mjs 的 agentAssessment 契约，不必构造 Jev 请求。
 
 > [!CAUTION]
 > **防降智铁律：本文档绝不包含任何具体比赛、代币或赔率的 Demo 假数据！**
 > 历史实盘中曾发生多次 Agent 上下文膨胀降智后，直接偷懒照抄文档中的 Demo 示例导致重大误判。
-> **所有 `state` 字段必须在执行时由 API（CEX API 或 BAW Prediction API）现场实时抓取，严禁硬编码或使用任何静态假数据！**
+> **客观 state 字段由现场 API/可核对来源提供，主观估计单独标注依据；业务输入不能使用硬编码假数据，离线测试 fixture 必须与业务隔离。**
 
 ---
 
@@ -13,16 +15,16 @@
 
 1. **结构化 Instructions (`question` + `goal` + `inputs`)**：
    - 显式在 `inputs` 中声明各指标的权威度（如：尖头去水概率是基准，变阵风险是减分项），引导 Jev 在 System One 层面建立拓扑关联。
-2. **事前风控硬包络 (`allowed`)**：
-   - 在 `state.allowed` 中显式注入账户资金上限与合规动作（如 `allowed: { opt_a: true, opt_b: false }`），使模型决策严格收敛于合规空间。
-3. **软指标“非对称减法”**：
-   - 舆情、伤病、传闻只能作为风险折扣（Penalty）或一票否决项，主驱动力永远是硬数据的数学正期望 (+EV)。
+2. **概率与执行约束分离 (`allowed`)**：
+   - 风控题可以使用已核实的账户限制；赛事概率题不携带账户执行许可，避免把禁选方向当作胜率证据。执行限制由代码单独检查。
+3. **软指标依据与不确定性**：
+   - 记录来源、时间和估计影响方向；没有证据的传闻保持未知，不将文本权重描述当作统计校准。
 
 ---
 
 ## 规范一：CEX 现货/合约突破开仓硬风控字段规范
 
-在调用 `scripts/binance_unified.js open-tpsl` 开仓前，必须通过代码动态抓取行情并组装为如下类型结构：
+启用 Jev 复核时，在开仓前通过代码抓取行情并组装为如下结构。未启用时仍执行 CEX SOP 的行情、止损和授权要求：
 
 ### 字段结构定义
 ```json
@@ -77,9 +79,9 @@
 
 ---
 
-## 规范二：Web3 预测市场胜率校准与 +EV 发现字段规范
+## 规范二：Web3 预测市场概率估计与 EV 字段规范
 
-在调用 `baw prediction` 交易前，必须通过 `baw` 与外网接口抓取真实数据并组装：
+调用 `baw prediction` 评估或交易时，必须现场读取盘口数据；独立赔率可选。未提供时不能把市场价格当作独立锚点，也不能虚构错配值：
 
 ### 字段结构定义
 ```json
@@ -90,25 +92,31 @@
     "target_outcome": "<STRING: 拟下注的目标选项>",
     "chain_market": {
       "token_id": "<STRING: 链上真实 Token ID，从 baw market 详情获取>",
-      "current_price": "<FLOAT: 链上当前买入价格>",
-      "implied_prob_pct": "<FLOAT: 盘口隐含胜率>",
-      "orderbook_slippage_at_1u_bps": "<INTEGER: 测算的1U滑点基点>",
-      "pool_liquidity_usd": "<FLOAT: 实时流动性池规模>"
+      "current_price": "<FLOAT 或 null: 链上当前买入价格>",
+      "implied_prob_pct": "<FLOAT 或 null: 盘口隐含概率>",
+      "orderbook_slippage_at_1u_bps": "<INTEGER 或 null: 有实测报价时的滑点>",
+      "pool_liquidity_usd": "<FLOAT 或 null: 缺失时保持未知>"
     },
-    "sharp_benchmark": {
-      "pinnacle_price": "<FLOAT: 欧洲尖头盘欧赔>",
-      "dejuiced_true_prob_pct": "<FLOAT: 纯代码数学公式去水后的真实胜率>",
-      "mispricing_discrepancy_bps": "<INTEGER: 胜率错配基点 (去水胜率 - 隐含胜率)>",
-      "calculated_ev_pct": "<FLOAT: 数学期望值 EV>"
+    "independent_anchor": {
+      "source": "<来源或 null>",
+      "observed_at": "<采集时间或 null>",
+      "target_outcome": "<赔率对应目标选项或 null>",
+      "opponent_outcome": "<赔率对应对手选项或 null>",
+      "target_odds": null,
+      "opponent_odds": null,
+      "raw_target_probability": null,
+      "dejuiced_probability": null,
+      "discrepancy_bps": null
     },
     "tactical_intelligence": {
-      "roster_stability": "<STRING: 必须带原文引用的变阵情报，无变阵则标 stable>",
-      "recent_h2h_form": "<STRING: 真实交手战绩>"
+      "roster_stability": "<带来源的变阵情报或 null>",
+      "recent_h2h_form": "<有来源的交手战绩或 null>"
     },
     "risk_limits": {
       "allowed": {
-        "target_action_allowed": "<BOOLEAN: 是否符合单注与持仓硬风控>",
-        "max_bet_amount_usd": "<FLOAT: 严禁超过 1.00 USDT>"
+        "target_action_allowed": "<BOOLEAN 或 null: 缺数据时为 null>",
+        "max_bet_amount_usd": "<FLOAT 或 null: 必须来自实际限额>",
+        "account_balance_usd": "<FLOAT 或 null: 必须来自实际账户数据>"
       }
     }
   },
@@ -116,9 +124,9 @@
     "math_ev_verdict": {
       "type": "choice",
       "instructions": {
-        "question": "<STRING: 目标选项在扣除滑点后是否为明确的数学正期望 (+EV)？>",
+        "question": "<STRING: 目标选项是否有正毛 EV；已验证成本缺失时净 EV 未知>",
         "goal": "<STRING: 捕获链上流动性定价偏差>",
-        "inputs": "<STRING: 尖头去水胜率为第一基准。错配点差必须覆盖滑点。战术变阵只能作为折扣因子>"
+        "inputs": "<STRING: 有独立赔率时以选项映射验证后的去水概率为锚，Jev 最多调整 ±5 个百分点；缺锚点时 Jev 估计必须标为未校准。成本缺失时只报告毛 EV，账户与限额缺失时风控状态未知>"
       },
       "criteria": {
         "execute_entry": "<STRING: 期望值为正且深度足够>",

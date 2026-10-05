@@ -32,9 +32,9 @@
 │           └── trading-signal/                # 链上聪明钱单笔交易信号与跟单分析
 │
 ├── custom/                            # 【自行研发与编排 Skills】（独立维护，永不冲突）
-│   ├── prediction-quant/              # 预测市场高确定性量化决策与执行工作流 (工业级特征工程)
+│   ├── prediction-quant/              # 预测市场概率评估、EV 状态与执行审批工作流
 │   ├── square-mining/                 # 广场「内容挖矿」五步自动化全链路工作流
-│   └── typesafe-evaluator/            # TypeSafe 业务决策与风控裁决器（情景自发触发）
+│   └── typesafe-evaluator/            # 可选 TypeSafe 结构化第二意见
 │
 ├── typesafe-ai/                       # 【Git Submodule: 第三方开源官方技能（可选扩展 / Optional）】
 │   │                                  # Upstream: https://github.com/typesafe-ai/skills.git
@@ -77,12 +77,12 @@ git submodule update --init --recursive
 ## 二、自研核心技能说明 (Custom Skills)
 
 ### [`custom/prediction-quant`](./custom/prediction-quant/SKILL.md)
-* **定位**：预测市场高确定性量化决策与执行闭环工作流。
-* **架构精髓**：基于工业级量化模型规范，集成欧赔去水算子（Pinnacle 尖头盘）、结构化特征工程（TradeState）、`inputs` 权重引导与事前硬风控包络线。
-* **执行中枢**：[`scripts/engine.mjs`](./custom/prediction-quant/scripts/engine.mjs)，包含扫盘过滤、Jev System One 胜率标定与 EV 测算、链上深度询价（BAW Quote）、强制人类审批闸门（Approval Gate）与赛后批量赎回（Redeem）。
+* **定位**：Agent 主导的预测市场评估、毛/净 EV 和人工审批；Jev 为可选第二意见，Agent/Jev 概率均为未校准估计。
+* **架构精髓**：标准 CLI/JSON，auto/agent/jev 三种模式；.env 无 Key 直接使用 Agent 分析。有独立锚点时模型调整限制在 ±5 个百分点；缺失数据保持未知，Mock 仅供测试。
+* **执行中枢**：[`scripts/engine.mjs`](./custom/prediction-quant/scripts/engine.mjs)，包含成对 outcome 评估、只读历史评分、BAW 深度询价、强制人类审批与赛后批量赎回。
 
 ### [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md)
-* **定位**：TypeSafe AI (System One) 业务决策与风控裁决器。
+* **定位**：可选 TypeSafe AI (System One) 结构化复核，未配置不妨碍 Agent 分析和经批准的交易。
 * **执行中枢**：[`scripts/typesafe.mjs`](./custom/typesafe-evaluator/scripts/typesafe.mjs)（默认模型 `jev-latest`，完全由 `.env` 中的 `TYPESAFE_API_KEY` 与 `TYPESAFE_MODEL` 驱动，具备本地 Pre-flight 静态自愈与确定性 Mock 引擎）。
 
 ---
@@ -90,14 +90,16 @@ git submodule update --init --recursive
 ## 三、第三方独立 Skills 说明（可选扩展 / Optional）
 
 ### [`typesafe-ai`](./typesafe-ai/skills/typesafe-ai/SKILL.md)
-* **性质**：可选扩展项（已注册为独立 Git Submodule，非强制基础依赖；若未配置 Key，系统自动降级为内置模型推理，不阻断主流程）。
+* **性质**：可选扩展项（已注册为独立 Git Submodule，非强制基础依赖；真实 Jev 评估仍需要 TYPESAFE_API_KEY，缺 Key 或请求失败时明确报错，只有显式 --mock 可运行离线测试）。
 * **来源**：[typesafe-ai/skills (GitHub)](https://github.com/typesafe-ai/skills)（完全保持官方 submodule 纯净，通过 `git submodule update` 直接同步上游）。
 * **定位**：TypeSafe System One 模型（如 Jev）的结构化判断底层概念与编程原语。
 * **业务联动**：在业务场景中由自研技能 [`custom/typesafe-evaluator`](./custom/typesafe-evaluator/SKILL.md) 与 [`custom/prediction-quant`](./custom/prediction-quant/SKILL.md) 依据情境调度。
 
 ---
 
-## 四、Antigravity 自动发现配置
+## 四、技能发现与跨客户端使用
+
+支持技能自动发现的客户端可读取下列目录索引；其他客户端直接读取 SKILL.md 并运行 CLI。业务流程不依赖某个客户端的自动发现机制或专有工具。
 
 在根目录 [`.agents/skills.json`](../skills.json) 中已注册多路径扫描入口：
 ```json

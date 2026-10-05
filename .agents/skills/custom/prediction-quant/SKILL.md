@@ -1,101 +1,105 @@
 ---
 name: prediction-quant
-description: Binance Web3 预测市场高确定性量化决策与执行工作流。集成结构化特征工程、尖头博彩去水赔率 (Pinnacle)、TypeSafe AI (System One) 连续概率标定与 +EV 计算，支持子代理情报搜集、BAW 链上扫盘询价与强制人类审批闸门。
+description: Binance Web3 预测市场工作流。Agent 分析、可选 Jev 复核、独立赔率基准、毛/净 EV、只读历史评分、BAW 询价与人工审批；基于通用 CLI/JSON，适用于不同 Agent 和 harness。
 ---
 
-# 预测市场高确定性量化决策工作流 (Prediction Quant Skill)
+# 预测市场评估与执行
 
-本技能为 **Binance Agentic Nexus (BAN)** 专属的预测市场量化决策套件。采用工业级特征工程规范，全面消除粗糙自然语言打分和幻觉，为 CEX/Web3 预测市场操作提供具备数学期望优势 (+EV) 的闭环决策。
+Agent 负责采集现场证据、比较选项和向用户解释判断；确定性代码负责概率限幅、EV、成本与执行约束；Jev 是可选的结构化复核。两种模型的概率在历史验证前均为未校准估计。
 
----
+## Jev 开关与配置
 
-## 零 Demo 与反虚构数据铁律 (Anti-Hallucination Guardrail)
+- 默认 `--provider auto`：项目根目录 `.env` 有非空 `TYPESAFE_API_KEY` 时使用 Jev；没有时直接消费当前 Agent 的 `state.agentAssessment`，不发送 Jev 请求。
+- `--provider agent`：显式仅用 Agent 分析；`--provider jev`：要求 Jev，但不能绕过未配置 Key 的禁用状态。
+- 地址优先级：`TYPESAFE_ENDPOINT` > `TYPESAFE_BASE_URL` 去除末尾斜杠后加 `/systemone` > 官方 `https://api.typesafe.ai/v1/systemone`。模型默认 `jev-latest`，保留 `TYPESAFE_MODEL`。
+- 仅配置地址、或 harness 注入进程级 API Key，都不会启用 Jev。不要打印真实凭证。
+- 无 Jev 时，扫描、Agent 评估、询价、人工批准后的交易和赎回均可继续。缺少 Agent 分析时，补充真实分析再评估，不制造替代概率。
 
-> [!CAUTION]
-> **绝对禁止任何形式的预置 Demo 与虚构数据！**
-> 1. **严禁捏造假标的**：绝不允许在代码、输出或提示词中出现任何硬编码假赛事、战队或虚构盘口；
-> 2. **真实接口直通**：所有盘口标的必须由 `engine.mjs --scan` 现场向真实的 BAW 接口请求；若 BAW 钱包未登录，必须如实向用户报错并提示执行 `baw auth signin`，严禁使用任何模拟假数据伪装已完成扫盘；
-> 3. **禁止口算推演**：欧赔去水胜率、盘口错配基点与 EV 必须由 `engine.mjs` 内置数学算子确定性计算，剥夺大模型口算与算术幻觉的借口。
+## 标准 CLI
 
----
-
-## 快速使用命令 (CLI Cheat Sheet)
+所有命令从项目根目录运行；切换客户端只需读取本 Skill 并执行标准 Node.js CLI，无需专有工具、插件或子代理接口。
 
 ```bash
-# 1. 扫描现场真实高流动性赛事盘口 (要求 BAW 已登录)
+# 扫描真实市场；每个市场保留所有 outcomes
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --scan --l1Category esports --limit 5
 
-# 2. 调用 Jev 结构化概率标定与 EV 测算 (必须传入现场真实特征工程 JSON)
-node .agents/skills/custom/prediction-quant/scripts/engine.mjs --evaluate --json '<JSON_STRING>'
+# 查看机器可读输入契约，不联网、不写文件
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --describe-input
 
-# 3. 链上深度询价
-node .agents/skills/custom/prediction-quant/scripts/engine.mjs --quote --tokenId <id> --marketTopicId <id> --amount 1.0
+# 输入单个 state 或同一市场的 state 数组；auto 为默认模式
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --evaluate --file tmp/market-outcomes.json
 
-# 4. 执行链上下单 (强制必须带有 --approved 显式审批参数)
+# 从标准输入接收 JSON，无需创建临时文件
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --evaluate --provider agent --stdin
+
+# 只读用户提供的历史数据
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --score-file <forecasts.jsonl> --bins 10
+
+# 只读询价；下注金额沿用用户指令，未声明时默认 1 USDT
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --quote --tokenId <id> --marketTopicId <id> --amount 1
+
+# 仅在用户明确批准具体交易后执行
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --approved
 
-# 5. 胜出头寸自动兑付赎回
+# 结算后按用户授权赎回
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --redeem --tokenIds <id1,id2>
-
-# 6. 内核纯数学算子与安全闸门自检 (无业务假数据)
-node .agents/skills/custom/prediction-quant/scripts/engine.mjs test
 ```
 
----
+`--stdin`、`--json`、`--file` 三选一。Jev 请求默认超时 15000ms，可用 `--timeout-ms` 调整。评估/评分只输出 JSON，不自动保存台账。临时文件放 `tmp/`，用后清理。数学与审批闸门本地检查：`node .agents/skills/custom/prediction-quant/scripts/engine.mjs test`。
 
-## 四步标准量化作业程序 (4-Step SOP)
+## 工作步骤
 
-```mermaid
-flowchart TD
-    Start["用户指令: /prediction-scan 或 寻找新机会"] --> Step1["Step 1: 现场扫盘与情报收集 (engine.mjs --scan)"]
-    Step1 --> SubagentCheck{"是否需要外部舆情?"}
-    SubagentCheck -- 是 --> Subagents["派发并发子代理抓取 Twitter/Reddit/HLTV 战报"]
-    SubagentCheck -- 否/已就绪 --> Step2["Step 2: 特征工程与 Jev 标定 (engine.mjs --evaluate)"]
-    Subagents --> Step2
-    Step2 --> Step3["Step 3: 渲染标准决策卡片并停在人类审批闸门"]
-    Step3 ==> Gate{"人类审批闸门 (Approval Gate)"}
-    Gate -- 驳回/放弃 --> End["终止操作 / 记录日志"]
-    Gate -- 确认批准 --> Step4["Step 4: 锁定报价并执行链上下单 (engine.mjs --execute --approved)"]
-    Step4 --> Redeem["赛后监听并批量赎回已结算头寸 (engine.mjs --redeem)"]
-```
+1. **获取证据**：通过真实 BAW/API 读取价格、流动性、持仓、资金和限额，查阅带来源/时间的赛事信息。扫描输出保留 marketTopicId（topicId 兼容别名）、marketTitle 和 question，区分比赛胜者、单局胜者与大小盘；已关闭市场被排除，流动性使用子市场自身数值，不能用事件总流动性替代。根据当前客户端的可用能力搜集；单个 Agent 即可完成，不依赖子代理。无法取得的数据留为未知。BAW 未登录则如实提示认证，业务路径不使用 Demo/Mock。
+2. **先做 Agent 分析**：中立比较市场的所有 outcomes，为每侧填写 `agentAssessment`（见下方契约）。可选择 `enter`、`pass` 或 `reject`。所有概率必须基于现场证据；算术交由引擎。
+3. **运行评估**：普通组合为 Agent + Jev。Jev 只接收证据，不接收 Agent 的概率或执行权限，减少意见互相影响。输出保留双方原始意见；暂不混合加权。采用 Jev 时，最终概率取 Jev 估计并在存在独立锚点时限幅；Agent-only 采用 Agent 估计并遵守相同限幅。
+4. **呈报与授权**：展示概率来源、未校准状态、毛/净 EV、缺失数据和双方分歧。询价确认实际成本/报价有效期后，用户批准具体选项和金额，才执行 `--approved`。批准之后若报价或金额改变，重新核对授权范围。执行前检查同场已有和在途订单，避免互斥方向重复下注；成功提交不等于已成交，按 BAW 返回状态核对。
 
-### Step 1: 现场扫盘与情报搜集 (Scan & Intelligence)
-1. 运行 `node .agents/skills/custom/prediction-quant/scripts/engine.mjs --scan` 获取现场流动性合规盘口；
-2. 若需外网赛事突发情报（如替补、变阵、背靠背疲劳），可派发 1~2 个 `research` 子代理搜集外网真实战报，提炼出 `polarScore`（-1.0 ~ +1.0）、`rosterRisk`（0.0 ~ 1.0）、`fatigueRisk`（0.0 ~ 1.0）；
-3. **禁止臆测**：无外部数据时，保持默认安全值（`rosterRisk: 0.1`）。
+## Agent 输入与输出契约
 
-### Step 2: 特征工程与 Jev 标定 (Feature Engineering & Calibration)
-1. 将现场盘口价格、外网尖头去水真实胜率（`Pinnacle` 欧赔转换）及舆情因子装配为 `PredictionTradeState`；
-2. 将该真实 State JSON 传入 `engine.mjs --evaluate --json '...'`（底层由 `typesafe-evaluator` 的 `jev-latest` 驱动，带有本地 Pre-flight 静态自愈与确定性 EV 计算）；
-3. 输出标准化量化指标：Jev 校准胜率、错配基点（Discrepancy bps）、期望价值（EV %）、风险评级。
+`state.agentAssessment` 是当前 Agent 自己产生的分析，不要求接入新的模型服务。
 
-### Step 3: 标准决策卡片与人类审批闸门 (Approval Gate)
-**铁律：涉及真实资金交易，绝对禁止私自越权开仓！必须先输出标准卡片，等待人类输入确认指令：**
+| 字段 | 要求 |
+| --- | --- |
+| eventId / marketId / targetOutcome | 非空字符串，与所属 state 完全一致 |
+| probability | 数值，0 到 1；非市场价格占位值 |
+| action | `enter` / `pass` / `reject`，是候选意见，不是下单授权 |
+| source | 实际分析 Agent / 模型标识，不充当外部赔率来源 |
+| evaluatedAt | 分析时间 ISO 字符串 |
+| rationale | 非空分析依据，引用采集事实，披露缺失证据 |
+| expiresAt | 可选截止时间；提供后过期分析被拒绝 |
+| confidence | 可选，自报置信度，不是历史命中率 |
 
-| 候选赛事与选项 | 盘口买价 | 盘口隐含胜率 | 尖头盘真实概率 | Jev 标定胜率 | 期望收益 (EV %) | 风险分 | 决策建议 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :---: |
-| **<现场真实赛事与标的选项>** | <实时买价> | <隐含胜率> | <去水真实胜率> | <Jev胜率> | **<期望收益%>** | <风险分> | <决策判定> |
+每侧 state 还需市场标题、价格、事件/市场/选项标识。独立赔率可选；提供时校验来源、采集时间及目标/对手映射。缺失时 `sharpBookmaker`、锚点概率和锚点错配为未知，不能回填盘口价。成对输入必须共享 eventId/marketId，各 targetOutcome 唯一。
 
-* 展示完成后，主动提示用户：
-  > *“已完成 Jev 特征工程与期望价值测算。该方案具备正期望与错配优势。下注金额由您决定（若未声明，系统将默认按 1.00 USDT 试探性执行）。如同意开仓，请回复【确认买入】或指定金额如【确认买入 5 USDT】，我将为您锁定报价并提交链上成交。”*
+输出要点：
 
-### Step 4: 锁定报价与链上闭环 (Quote, Execute & Redeem)
-1. 收到用户明确批准后，调用 `engine.mjs --quote`（传入用户指定金额 `--amount <amt>`，未声明则默认 1.0）获取 `quoteId` 锁定深度与滑点；
-2. 传入 `--approved` 参数执行 `engine.mjs --execute --quoteId <id> --approved`；
-3. 比赛结算后，自动运行 `engine.mjs --redeem --tokenIds <id>` 完成链上自动兑付。
+- `evaluation` 记录请求模式、实际 provider、组合模式、选择原因、Jev 状态及失败代码。
+- `forecast` 保留市场概率、独立锚点/来源/时间、Agent 与 Jev 原始概率、最终概率、预测时间。`calibrated=false`。
+- 无锚点的来源为 `agent_unanchored_estimate` 或 `jev_unanchored_estimate`；有锚点的来源为 `sharp_anchor_bounded_agent_adjustment` 或 `sharp_anchor_bounded_jev_adjustment`。两者对独立锚点最多调整 ±5 个百分点。
+- `decision.modelSuggestedAction` 是原始模型意见；`action` 和 `executionEligibility` 是代码检查后的状态。`readyForHumanApproval` 仅表示可交给用户审批，不代表概率已验证，更不会下单。未校准估计可在完整成本/风控检查后交给用户审批。
+- Agent 选择 pass/reject 时，Jev 的入场意见不能覆盖它；成对评估失败或多侧同时候选时，整组不可标为可审批，先处理分歧。
+- `auto` 中 Jev 网络/HTTP/超时失败时，仅在已提供合法 Agent 分析的情况下使用该分析，并披露失败原因。显式 jev 模式失败则返回失败。Mock、非法概率和异常返回不能触发该回退。
 
----
+## 成本与风控
 
-## 核心风控红线 (Risk Guardrails)
+- 下注金额沿用用户指令，默认 1 USDT；maxBetUsd 是上限，不能当成下注额。
+- 缺流动性、账户余额、限额或执行方向许可时保持未知。低于 1000 USDT 的流动性不通过检查。
+- 净 EV 需要同一注额的成本对象 `executionCosts: {totalUsd, stakeUsd, source, observedAt}`；否则只报毛 EV，netEV 为 null。没有默认 2% 费用，也不能推断成本为零。
+- 同场不得同时下注互斥方向属于执行约束，不能作为胜率先验。
+- 审批要求适用于 Agent-only 和 Agent + Jev 两种模式。
 
-1. **下注金额由人工决定**：下注量必须由人类明确指定；若用户在审批确认中未明确声明具体金额，系统默认按 **1.00 USDT** 执行，严禁 Agent 自主超额加注；
-2. **严禁同场对冲内耗**：绝对禁止在同一场比赛两个对立方向分别下注（`allowed.optB: false`）；
-3. **临时文件卫生**：任何临时性测试脚本必须存放于 `tmp/`，测试完成后立即物理删除；
-4. **机密脱敏**：任何日志或汇报严禁打印 `.env` 内真实秘钥明文。
+决策卡应包含：事件/选项、行情时间、Agent 原始概率/Jev 原始概率（未使用时明确说明）、独立锚点及来源、最终概率来源、毛 EV、净 EV/成本、未知项、分歧、候选金额和审批状态。
 
----
+## 历史评分（不自动落盘）
 
-## 深度技术参考 (References)
+用户提供 JSONL，每行是一笔已结算预测，至少有 `outcome`（0/1）及 `probabilities.workflow`（最终采用概率）。可加 eventId、marketId、targetOutcome、evaluatedAt、`probabilities.human`、`probabilities.market`；概率需对应同一事件、选项与决策时点。
 
-- [`jev_prompt_guide.md`](references/jev_prompt_guide.md) — 结构化特征工程与 "Inputs" 引导语法构造指南
-- [`risk_rules.md`](references/risk_rules.md) — 预测市场实盘全周期复盘提炼之风控军规
+`netPnlUsd` 是已扣实际成本的工作流净盈亏，`actualCostUsd` 可单独披露成本。各基线只有真实成交或回放结果时才填 `netPnlUsdBySource`、`actualCostsUsdBySource`，不从概率虚构盈亏。缺失时净盈亏为未知。
+
+评分输出 Brier、概率校准分箱、命中率、净盈亏；`sameEventComparison` 仅使用三方概率齐全的相同记录。文件只读，输入和报告由用户管理。
+
+## 参考
+
+- [特征和提示词指南](references/jev_prompt_guide.md)：为 Agent 和可选 Jev 准备证据。
+- [风控规则](references/risk_rules.md)：金额、持仓、审批和未知数据处理。
+- [跨客户端协议与工作流设计](../../../../docs/prediction-workflow.md)：模式选择、迁移和评估与执行规范。

@@ -1,6 +1,6 @@
 # 结构化提示词与特征工程指南 (Prompt & Feature Engineering Guide)
 
-本文档为 `prediction-quant` 技能提供标准特征工程与问题构造指南。
+本文档为 `prediction-quant` 提供标准特征和可选 Jev 的问题构造指南。Agent 先据现场数据生成 agentAssessment；.env 无 API Key 时只用 Agent 分析。有 Key 时 Jev 复核相同证据，输入中剔除 Agent 的原始概率与执行许可，分别保存双方意见，不自动平均加权。
 
 ---
 
@@ -8,20 +8,21 @@
 
 ### 原则一：严密特征工程 (Feature-Engineered State)
 * **严禁**：直接把整篇赛事战报或推特大段文本扔进 `state`，这会导致 Token 消耗激增、注意力分散和概率漂移。
-* **推荐**：在输入 Jev 前由前置流程/子代理将信息清洗提炼为精炼结构化数字：
+* **推荐**：由当前 Agent 或采集脚本将证据提炼为结构化数字，保留来源和时间；不要求子代理：
   * `impliedProb`：盘口当前代币买入价格对应的隐含胜率（如 0.60）。
-  * `sharpBookmaker.dejuicedProb`：欧洲尖头机构（Pinnacle 等）赔率去水后的真实物理胜率。
+  * `sharpBookmaker.dejuicedProb`：独立赔率来源去水后的概率基准；它是外部基准，不应宣称为已知的真实胜率。
+  * 独立基准同时需要 `source`、`observedAt`、`targetOutcome`、`opponentOutcome`，并与待评估选项匹配。
   * `discrepancyBps`：错配基点基准差 = $(P_{\text{sharp}} - P_{\text{implied}}) \times 10000$。
   * `sentiment.polarScore`：社区/解说情绪极性数值化（-1.0 到 +1.0）。
   * `sentiment.rosterRisk`：变阵/替补/换人风险系数（0.0 到 1.0）。
   * `sentiment.fatigueRisk`：赛程背靠背/跨时区疲劳系数（0.0 到 1.0）。
 
 ### 原则二：“Inputs” 权重引导语法
-Jev 能够根据我们显式指定的因果优先级（Inputs priority）对特征进行严格加权：
-* **Priority 1 (锚点)**：尖头博彩机构的去水真实概率是统计学基准，权重最高（~60%）。
-* **Priority 2 (边际优势)**：盘口错配基点 `discrepancyBps` 衡量交易利差空间（~20%）。
-* **Priority 3 (风险折损)**：阵容稳定性与赛程疲劳系数作为打折惩罚项（~15%）。
-* **Priority 4 (硬包络线)**：风控 `allowed` 必须无条件服从，若被禁止或额度为 0，直接拒绝（~5%）。
+`inputs` 文字只能表达判断优先级，不能保证模型执行了精确数值权重，也不等于统计校准。
+* 有经来源和选项映射验证的独立基准时，以它为锚，代码将所选 Agent 或 Jev 概率影响限制在 ±5 个百分点。
+* 没有独立基准时可展示所选模型的独立估计，标记 agent_unanchored_estimate 或 jev_unanchored_estimate，不把自报置信度当作历史准确度。
+* 缺失的流动性、阵容、疲劳、资金和交易成本信息必须保持未知；不要通过 prompt 让模型填补虚构数值。
+* 同场防双向下注属于执行约束，不要在尚未对比 outcomes 时把某一方向预先写成不可选。
 
 ---
 
@@ -33,18 +34,18 @@ Jev 能够根据我们显式指定的因果优先级（Inputs priority）对特�
     "direction": {
       "type": "choice",
       "instructions": {
-        "goal": "Evaluate whether entering this prediction market position presents a mathematically sound positive expected value (+EV) wager under strict bankroll constraints.",
-        "inputs": "Priority 1: Sharp bookmaker dejuiced probability (sharpBookmaker.dejuicedProb) is the ground-truth probabilistic anchor. Priority 2: Discrepancy basis points (discrepancyBps) reflects the market pricing inefficiency over retail consensus. Priority 3: Sentiment polarScore, rosterRisk, and fatigueRisk act as essential haircut discounting factors. Priority 4: Allowed risk envelope must be respected - if maxBetUsd is zero or option is disallowed, immediately reject.",
+        "goal": "Estimate the target outcome from supplied evidence and assess its gross expected margin. Execution limits and authorization are checked separately by code.",
+        "inputs": "Use an independently sourced, outcome-matched dejuiced probability as a benchmark when available. If absent, estimate from the supplied evidence and explicitly label the result uncalibrated. Missing liquidity, roster, fatigue, bankroll, or cost information is unknown and must not be inferred. Execution restrictions are not evidence about which outcome is more likely.",
         "criteria": {
-          "execute_plus_ev": "The trade offers statistically sound positive EV (> 3% expected margin) anchored by sharp odds and verified signals with low or manageable operational risks.",
+          "execute_plus_ev": "The supplied evidence supports a positive gross expected margin (> 3%). If no independent probability anchor is available, describe the result only as an uncalibrated model estimate; it is not verified edge.",
           "reject_negative_ev": "The trade exhibits negative EV, insufficient margin buffer (< 3%), or unacceptable roster/fatigue disruption risks.",
-          "pass_no_bet": "The book is illiquid, fair pricing is ambiguous, or outside bankroll risk envelope."
+          "pass_no_bet": "The book is illiquid, evidence is insufficient, or fair pricing is ambiguous."
         }
       }
     },
-    "calibrated_prob": {
+    "jev_probability_estimate": {
       "type": "noul",
-      "instructions": "Determine the true calibrated probability (0.0 to 1.0) that the target outcome wins, incorporating sharp bookmaker fair probability, liquidity slippage, and discounting roster/fatigue penalties."
+        "instructions": "Estimate the probability (0.0 to 1.0) that the named target outcome wins from the supplied evidence. This estimate is not statistically calibrated. Do not invent missing odds, liquidity, roster, fatigue, bankroll, or cost data."
     },
     "risk_score": {
       "type": "score",
@@ -69,7 +70,9 @@ Jev 能够根据我们显式指定的因果优先级（Inputs priority）对特�
   $$S = \frac{1}{\text{Odds}_A} + \frac{1}{\text{Odds}_B}$$
   $$P_A = \frac{1 / \text{Odds}_A}{S}, \quad P_B = \frac{1 / \text{Odds}_B}{S}$$
 
-* **期望价值 Expected Value (EV)**：
+* **毛期望价值 Expected Value (EV)**：
   $$\text{Payout} = \frac{\text{Stake}}{\text{MarketPrice}}$$
-  $$\text{EV} = P_{\text{calibrated}} \times \text{Payout} - \text{Stake}$$
+  $$\text{Gross EV} = P_{\text{adopted estimate}} \times \text{Payout} - \text{Stake}$$
   $$\text{EV \%} = \frac{\text{EV}}{\text{Stake}} \times 100\%$$
+* 采用概率在独立锚点存在时限制为锚点 ±5 个百分点；否则使用所选 Agent 或 Jev 的未校准估计。该估计不因进入公式而变成已校准概率。
+* 净 EV 还要扣除同一注额对应的实际总成本；成本来源、采集时间或适用下注额缺失时，净 EV 未知，不可默认费用为零。

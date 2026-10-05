@@ -1,30 +1,31 @@
 ---
 name: typesafe-evaluator
 description: >-
-  Use this skill whenever the agent needs to make objective, probability-calibrated
-  decisions or categorical judgments for Web3 and CEX operations using TypeSafe System One (Jev).
-  Triggers automatically on: (1) trading risk evaluations before opening/closing positions;
-  (2) on-chain smart money and predictive market event probability calibration; (3) risk anomaly detection;
-  (4) any scenario requiring probability-calibrated classification (Choice), condition truth (Noul),
-  or graded evaluation (Score). Agent MUST dynamically formulate context-specific state, instructions,
-  and criteria in real time from live data, and execute via node .agents/skills/custom/typesafe-evaluator/scripts/typesafe.mjs.
+  Optional TypeSafe System One (Jev) structured second opinion for Web3/CEX probability,
+  categorical and risk judgments. Use when Jev is configured or explicitly requested.
+  Without a project .env API key, the host Agent continues the normal analysis and
+  approved trading workflow. Portable Node.js CLI/JSON; no harness-specific tools.
 ---
 
 # TypeSafe Evaluator (System One 业务决策裁决器)
 
-本 Skill 是 BAN 系统的自研通用业务决策与风控裁决引擎。它将 TypeSafe System One（默认且唯一标准别名绑定 `jev-latest`）底层能力与高频实盘量化工程深度绑定。
+本 Skill 为 BAN 提供可选的结构化第二意见，默认模型为 `jev-latest`。Agent 负责现场分析与用户沟通，代码负责算术和执行闸门。Jev 的意见不构成交易授权。
+
+项目根目录 `.env` 中未配置非空 `TYPESAFE_API_KEY` 时不使用 Jev；客户端继承的进程级 Key 不会启用它。预测市场应使用 `engine.mjs --evaluate` 的默认 auto 模式，由当前 Agent 填写 agentAssessment 继续。直接调用本 Skill 的真实 API 功能仍会如实报告缺 Key。
+
+保留地址配置：`TYPESAFE_ENDPOINT` 优先，其次 `TYPESAFE_BASE_URL` + `/systemone`，均未填写时为 `https://api.typesafe.ai/v1/systemone`。支持 `TYPESAFE_MODEL`，不绑定特定后端构建版本。地址/模型同名配置维持进程变量优先于文件值的兼容行为，Key 的启用开关始终在项目文件中。
 
 > [!IMPORTANT]
 > **核心原则：特征结构化、权重明确化、风控事前包络化！**
 > 工业级量化最佳实践：
 > 1. **严禁无指导长文盲目喂入**：`instructions` 优先采用包含 `inputs` 引导的对象结构，显式告知 Jev 各特征权威度与优先级；
-> 2. **事前风控注入**：在 `state.allowed` 中显式固化资金上限与合规开仓方向；
+> 2. **概率与风控分开**：只有风控题需要执行约束；赛事概率题不把资金上限或禁止下注方向作为概率证据，执行检查由代码完成；
 > 3. **模型别名规范**：严格由环境解析默认模型为 `jev-latest`，严禁在任何脚本或参数中硬编码特定后端构建版本号。
 
 > [!CAUTION]
-> **绝对防降智铁律：严禁硬编码或使用任何 Demo / Mock 假数据！**
+> **生产评估不得使用 Demo / Mock 假数据；Mock 只允许显式离线测试。**
 > 历史实盘中曾多次发生 Agent 因上下文过长发生认知疲劳（降智）后，直接偷懒照抄 Demo 示例数据或伪造行情的重大失误。
-> **所有 `state` 字段必须由 API（CEX 现货/合约 API 或 BAW 链上预测盘口）现场实时抓取构建，严禁使用任何静态 demo 文件或硬编码假数据！**
+> **state 中的客观行情由现场 API/可核对来源提供，主观分析单独标注来源与依据。业务路径禁止静态 Demo 和硬编码假数据；离线测试 fixture 必须与业务隔离。**
 
 ---
 
@@ -91,13 +92,13 @@ description: >-
 
 1. **硬数据代码直通（Zero-LLM Touching）**：
    * 盘口价、订单薄深度、外网去水胜率、持仓量、滑点等纯数字，必须由脚本直接通过 API 读取并写入 JSON，严禁主 Agent 在对话里进行二次口算估算；
-2. **软数据强凭证与非对称减法**：
-   * 针对新闻、变阵、替补等非结构化情报，必须附带一手来源引用；无确凿证据时一律保守归零（`roster_risk: 0.0`）；
-   * 软指标只能充当“减分项/一票否决项”，交易信号的主驱动力必须来自硬数据的正期望 (+EV)；
-3. **隔离子代理接单（Stateless Subagents）**：
-   * 若主对话步数过长，严禁疲劳的主 Agent 在本上下文中进行复杂的情报主观推演，必须调用 `invoke_subagent` 派发 0 历史污染的全新子代理完成调研；
+2. **软数据保留凭证与不确定性**：
+   * 针对新闻、变阵、替补等非结构化情报，必须附带一手来源引用；无确凿证据时标记为未知，不要用 roster_risk: 0.0 代替缺失；
+   * 解释每项证据影响估计的方向与依据；不把传闻当作事实，也不将提示词中的优先级宣称为已验证的数值权重；
+3. **重新核对证据**：
+   * 长上下文中重新读取事实来源与采集时间，并缩减输入到当前问题相关的数据。单个 Agent 即可执行；工作流不依赖特定客户端的子代理、记忆或审批工具；
 4. **决策看板原始数据穿透**：
-   * 呈报人类审批时，必须同时并列呈现脚本抓取的原始数据与 Jev 标定概率，让人类一眼识别事实偏差。
+   * 呈报人类审批时并列呈现原始事实、Agent 判断与可选 Jev 估计，标注来源与分歧，禁止把模型概率称为已校准胜率。
 
 ---
 
@@ -114,8 +115,11 @@ node .agents/skills/custom/typesafe-evaluator/scripts/typesafe.mjs --json '<Agen
 mkdir -p tmp
 # Agent 将 live payload 写入 tmp/payload.json
 
-# 2. 调用内核执行评估 (亦可加 --mock 离线模拟)
+# 2. 调用内核执行真实评估 (需要 TYPESAFE_API_KEY)
 node .agents/skills/custom/typesafe-evaluator/scripts/typesafe.mjs --file tmp/payload.json
+
+# 仅测试输入解析时显式指定 --mock；Mock 输出是中性占位数据，不能作为业务判断
+node .agents/skills/custom/typesafe-evaluator/scripts/typesafe.mjs --file tmp/payload.json --mock
 
 # 3. 评估完成后必须立即物理清理临时文件，确保工作区始终保持 Clean 纯净状态
 rm -f tmp/payload.json
@@ -130,19 +134,16 @@ rm -f tmp/payload.json
 ### 返回值解析与度量消费
 * **连续概率分布**：读取 `answers.<id>.probabilities` 获取精细概率（如 `{"optA": 0.95, "optB": 0.05}`）；
 * **离散选择**：读取 `answers.<id>.choice`；
-* **性能与成本审计**：读取 `metrics.latencyMs`（推理耗时）与 `metrics.costUsd`（Token 计费），并同步记录至审计台账。
+* **性能与成本审计**：读取 metrics.latencyMs（推理耗时）与 metrics.costUsd（Token 计费）；仅由调用方已启用的审计流程负责持久化，预测历史不会自动落盘。
 
 ---
 
-## 四、双轨优雅降级机制 (Dual-Track Fallback)
+## 四、真实评估失败处理与 Mock 隔离
 
-当未配置 `TYPESAFE_API_KEY` 或网络离线时：
-1. **数学计算代码硬接管**：
-   * `typesafe.mjs` 自动激活内置的确定性 `MockEvaluator`，由代码原生根据去水公式与赔率错配计算 EV，输出绝对不可篡改的代码基准事实（`isMock: true`），**严禁 Agent 在对话里用感觉口算赔率**；
-2. **语义裁决隔离子代理补充**：
-   * 若确实存在需要大模型主观理解的战术定性问题，由无历史污染的独立子代理完成打分；
-3. **人类终审明确标注**：
-   * 输出决策卡片时明确标注来源（`[源自 Jev-latest 标定]` 或 `[源自 代码数学Mock + 子代理复核]`），确保决策链路全透明。
+- 直接请求 Jev 时，缺少项目 `.env` 的 `TYPESAFE_API_KEY`、网络失败或 API 错误均如实报错。默认请求/响应期限 15 秒；不自动重试或切换到 Mock。
+- 预测市场的 auto 编排在无 Key 时直接使用真实 Agent 分析；Jev 服务故障时，只有已提供合法 Agent 分析才可继续，并公开 Jev 失败状态。显式 jev 模式及非法模型返回不使用该回退。
+- `--mock` 仅用于本地 schema/调用链测试，输出 `metrics.isMock: true`、中性概率与空方向；任何业务评估器都必须拒绝将其生成交易建议。
+- 预测市场流程中的概率仍须标记来源和校准状态；Mock 或 Jev 自报 confidence 都不能代替历史赛果评分。无独立赔率时可展示未校准 Jev 估计，但不得将其描述为已验证优势。
 
 ---
 
@@ -150,7 +151,7 @@ rm -f tmp/payload.json
 
 直接参考成熟的生产级量化决策模板：[`references/scenario_blueprints.md`](./references/scenario_blueprints.md)
 * 蓝图 1：CEX 现货/合约突破开仓硬风控 (`trading_gatekeeper`)
-* 蓝图 2：Web3 预测市场胜率校准与 +EV 发现 (`prediction_calibration`)
+* 蓝图 2：Web3 预测市场概率估计与 +EV 评估 (`prediction_probability_estimation`)
 
 > [!NOTE]
-> **关于币安广场内容治理**：广场发帖与内容挖掘由 [`square-mining`](../square-mining/SKILL.md) 技能独立负责，零 Markdown 格式校验由纯代码/正则瞬间完成，文案创作由 Agent 大脑现场生成，**无需且不应调用 Jev**，避免不必要的 API 消耗与延迟。Jev 专精于低延迟客观概率标定与量化风控。
+> **关于币安广场内容治理**：广场发帖与内容挖掘由 [`square-mining`](../square-mining/SKILL.md) 技能负责，文案由 Agent 生成，格式由代码校验，无需调用 Jev。
