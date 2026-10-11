@@ -2,7 +2,7 @@
 
 本文档归属于自研技能 [`typesafe-evaluator`](../SKILL.md)，仅定义 CEX 量化风控与 Web3 预测市场概率估计的**字段类型与层级规范 (Abstract Schema)**。
 
-项目 .env 有 API Key 时，Agent 根据当前情景自主选用这些请求结构，动态构造 state、instructions 与 criteria，无需用户每次点名 Jev。长任务使用可用子 Agent 搜索和独立核查，主 Agent 汇总证据。无 API Key 时继续 Agent 协作分析与经批准的交易；预测市场使用 engine.mjs 的 agentAssessment 契约，不构造 Jev 请求。
+项目 .env 有 API Key 时，Agent 根据当前情景自主选用这些请求结构，动态构造 state、instructions 与 criteria，无需用户每次点名 Jev。多来源/复杂情景及长任务使用可用子 Agent 搜索和独立反证；按搜索、CLI/API等任务能力派发，不统一限制为仅 research，主 Agent 复核来源并汇总证据。无 API Key 时继续 Agent 协作分析与经批准的交易；预测市场使用 engine.mjs 的 agentAssessment 契约，不构造 Jev 请求。
 
 > [!CAUTION]
 > **防降智铁律：本文档绝不包含任何具体比赛、代币或赔率的 Demo 假数据！**
@@ -22,60 +22,48 @@
 
 ---
 
-## 规范一：CEX 现货/合约突破开仓硬风控字段规范
+## 规范一：CEX 永续多空、多行情判断
 
-启用 Jev 复核时，在开仓前通过代码抓取行情并组装为如下结构。未启用时仍执行 CEX SOP 的行情、止损和授权要求：
+[合约评估入口](../../../../../scripts/futures_evaluator.mjs)接收实际扫描结果与 Agent 判断；通过 --describe-input 输出当前契约。不使用预测市场二元赔付 EV。特征只是证据，不硬编码策略阈值或胜率。
 
-### 字段结构定义
-```json
-{
-  "state": {
-    "symbol": "<STRING: 交易对，如从行情接口获取>",
-    "market_type": "USDT_M_FUTURES",
-    "current_price": "<FLOAT: 实时撮合价>",
-    "breakout_metric": {
-      "box_high_price": "<FLOAT: 箱体阻力位>",
-      "breakout_depth_pct": "<FLOAT: 突破幅度百分比>",
-      "volume_surge_ratio_20p": "<FLOAT: 20周期成交量放大倍数>"
-    },
-    "derivatives_flow": {
-      "funding_rate": "<FLOAT: 实时资金费率>",
-      "oi_change_24h_pct": "<FLOAT: 24小时持仓量变化率>",
-      "top_trader_long_short_ratio": "<FLOAT: 大户多空比>",
-      "orderbook_bid_ask_depth_ratio": "<FLOAT: 订单簿买卖深度比>"
-    },
-    "risk_envelope": {
-      "planned_stop_loss_pct": "<FLOAT: 止损距离百分比>",
-      "reward_risk_ratio": "<FLOAT: 盈亏比>",
-      "position_size_usdt": "<FLOAT: 开仓名义金额>",
-      "allowed": {
-        "open_long": "<BOOLEAN: 是否允许做多>",
-        "open_short": "<BOOLEAN: 是否允许做空>",
-        "max_leverage": "<INTEGER: 最大允许杠杆>"
-      }
-    }
-  },
-  "questions": {
-    "execution_verdict": {
-      "type": "choice",
-      "instructions": {
-        "question": "<STRING: 是否确认顺势突破入场？>",
-        "goal": "<STRING: 过滤假突破并确保滑点与手续费覆盖>",
-        "inputs": "<STRING: 明确指出资金费率、大户比与订单簿支撑墙的判定权重。若 allowed.open_long 为 false 则拒绝>"
-      },
-      "criteria": {
-        "approve_entry": "<STRING: 量价共振且深度充足的标准>",
-        "reject_fakeout": "<STRING: 诱多假突破或衰竭量的特征>",
-        "wait_pullback": "<STRING: 短期超买等待回踩确认的特征>"
-      }
-    },
-    "squeeze_intensity": {
-      "type": "noul",
-      "instructions": "<STRING: 轧空爆发概率是否大于预期阈值？>"
-    }
-  }
-}
+```bash
+node scripts/futures_evaluator.mjs --describe-input
+node scripts/futures_evaluator.mjs --evaluate --stdin --provider auto
+node scripts/futures_evaluator.mjs --evaluate --file tmp/futures-analysis.json --provider agent
 ```
+
+### 输入字段
+
+- symbol、observedAt（真实采集时间），以及 scannerResult 或 timeframes：包含 4h、1h、15m 的 status 与 features。
+- agentAssessment：symbol、direction、setupType、rationale、counterEvidence 字符串数组、invalidations 字符串数组、source、evaluatedAt、expiresAt；入场须有明确失效条件。
+- tradePlan：entryPrice、stopLoss、takeProfit、quantity、leverage。
+- riskLimits：maxLossUsd、maxNotionalUsd、maxLeverage、maxSlippageBps、source。
+- executionChecks：accountModeKnown、flat、noPendingEntry、filtersPassed、availableMarginUsd、slippageBps、observedAt。
+- executionCosts：entryUsd、stopExitUsd、targetExitUsd、fundingUsd、quantity、source、observedAt；数量须匹配计划，成本缺失仍可分析但不得称净盈利已确认。
+- jevInstructions：可选现场补充问题，不得改变中立证据规则。
+
+扫描证据、成本与执行快照默认在 15 分钟内；Agent evaluatedAt 不早于证据，expiresAt 必须显式提供且报告结束时仍有效。审批就绪不代替执行时的新鲜价格、深度和账户复检。入场需要完整的已收盘特征，不将空 features 对象视为证据。
+
+| setupType | direction | 分析要点 |
+|---|---|---|
+| breakout_long | LONG | 上沿突破及假突破反证 |
+| breakdown_short | SHORT | 下沿跌破及快速收回反证 |
+| pullback_long | LONG | 上升趋势回踩及结构失效反证 |
+| rebound_short | SHORT | 下降趋势反弹及转强反证 |
+| range_bottom_long | LONG | 区间下沿拒绝及向下突破反证 |
+| range_top_short | SHORT | 区间上沿拒绝及向上突破反证 |
+
+WAIT / NO_TRADE 必须显式提供 setupType:null，不能省略；rationale / invalidations 说明等待或不交易条件。输出保留 agentAssessment、jevAssessment、providerUsed、jevStatus、direction、setupType、tradePlan、riskChecks、missingData、readyForHumanApproval。风险/成本/执行资料未知时就绪为 false；无 Key 不发 Jev 请求，Agent 分析照常。
+
+### Jev 独立市场判断
+
+实际 payload 由评估器构造，state 只包含可核对市场事实：symbol、observedAt、currentPrice、timeframes、funding、openInterest、orderbook、evidence 与 missingData。排除 Agent 方向/信心、交易计划、权限、风险上限及凭据，避免把先验方向或执行资格当作涨跌证据。
+
+原始扫描保留每周期 200 根；Jev 最小快照仅传每周期最近 8 根已收盘 K 线，保留完整特征、状态和来源时间，并以 closedCandleCount 与 candleWindow 明示原数量和窗口。ChoiceAnswer 必须包含完整类型、方向、confidence 与四方向概率分布；概率和有效，选择应为最大概率之一，非法答案不能用于建议。
+
+questions.direction 使用 choice，criteria 同时提供 LONG、SHORT、WAIT、NO_TRADE。动态 instructions 要求同等比较箱顶/箱底、买卖压力、六情景、假突破/假跌破及两侧拥挤，不单问轧空或只检查 open_long。
+
+账户许可、实际止损几何、滑点、风险预算由代码在独立执行检查中验证。Agent 与 Jev 分歧保留原样，不平均；方向冲突待解决后再审批。非法输出和 Mock 拒绝；auto 只有合法 Agent 判断已存在时对网络超时/连接失败显式回退，HTTP 拒绝不回退。明确成本才能计算净目标盈亏与净止损，净目标盈亏为正且全部检查通过才就绪；不宣称已校准胜率或净正 EV。
 
 ---
 

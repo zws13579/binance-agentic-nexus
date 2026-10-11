@@ -78,5 +78,5 @@ $RECYCLE.BIN/
 .claude/
 .cursor/
 .antigravity/
-# Local regression checks are retained in this workspace, not published.
+# Disposable checks belong in tmp/; ignore accidental test artifacts.
 tests/

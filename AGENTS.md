@@ -14,11 +14,11 @@ node scripts/binance_unified.js ticker <s1> [s2...]
 node scripts/binance_unified.js depth <symbol> [limit]
 node scripts/binance_unified.js sentiment <symbol>
 
-# Multi-factor breakout radar (top candidates by box breakout & volume surge)
-node scripts/futures_scanner.mjs --top 5
+# Neutral perpetual research (closed 4h/1h/15m candles, liquidity ranking)
+node scripts/futures_scanner.mjs --top 20
 
-# Open position with atomic TP/SL (idempotent state recovery)
-node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <sl> <tp>
+# Preview serial entry + protection; retain request ID for reconciliation
+node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <sl> <tp> --dry-run --request-id <id>
 
 # Web3 wallet & Trade journal (if ENABLE_TRADE_JOURNAL=true)
 baw wallet status --json
@@ -34,14 +34,15 @@ node scripts/publish_square.mjs --file tmp/draft.txt --dry-run
 
 ## Architecture & Code Map
 
-- `scripts/binance_unified.js` — CEX unified client (4-layer: base, normalizer, workflows, table-driven CLI)
-- `scripts/binance_client.mjs` — ESM compatibility bridge for modern modules
-- `scripts/futures_scanner.mjs` — Lightweight multi-factor breakout radar (USDT-M Futures)
-- `scripts/trade_journal.mjs` — Confidential audit trade logger (strictly disabled by default in .env)
+- `scripts/binance_unified.js` — CEX data, funding and protected execution CLI
+- `scripts/binance_client.mjs` — ESM
+- `scripts/futures_scanner.mjs` — Neutral perpetual facts (schema 2; no opportunity score)
+- `scripts/futures_evaluator.mjs` — Agent-led LONG/SHORT/WAIT/NO_TRADE review; optional Jev
+- `scripts/trade_journal.mjs` — Trade logger (disabled by default)
 - `scripts/publish_square.mjs` — Square content publisher with Browser Fill fallback
-- `scripts/proxy_bootstrap.mjs` — Port-proxy bootstrap fallback
-- `.agents/skills/` — Skill system root (binance-skills-hub, custom, typesafe-ai; includes `prediction-quant`, `typesafe-evaluator`)
-- `.env` — Credentials (see variable list below; NEVER echo values)
+- `scripts/proxy_bootstrap.mjs` — Proxy fallback
+- `.agents/skills/` — Official/custom skills; prediction-quant and typesafe-evaluator
+- `.env` — Credentials; NEVER echo values
 
 ## Environment Variables (.env)
 
@@ -60,8 +61,9 @@ Variables only — values are NEVER printed:
 - All extensions are workspace-local; no polluting global directories
 
 ### Trading Safety
-- NEVER open positions without stop-loss — always use `open-tpsl` for atomic entry+SL
-- Verify orderbook depth (bid/ask ratio) + smart money inflow before entry
+- Use `open-tpsl` with SL/TP, risk limits and authorized `--approved`; dry-run previews
+- Check both market directions, executable depth and source-backed flows; no adding, reversing or dual holding
+- Funding requires asset/product, amount, `--dry-run` or authorized `--approved`; see CEX SOP
 
 ### Square Content (Write to Earn)
 - STRICTLY zero Markdown in post body (no **bold**, # heading, - list, or emoji walls)
@@ -72,7 +74,7 @@ Variables only — values are NEVER printed:
 - Dynamically check `baw` via `baw --version`; TUN mode is default (native run); port-proxy mode is fallback only
 - Anti-Duplication: ALWAYS check existing Skills and scripts before building anything new
 - Harness portability: use CLI/JSON and adapt orchestration to available client capabilities
-- Long research: use available subagents for parallel search and fresh-context verification
+- Research: use fresh-context subagents for facts/counterevidence; adapt search and CLI/API tools to tasks
 - Jev: with project .env key, autonomously use for relevant probability/risk judgments; without key, use Agent
 
 ## Deep Dive Docs (read on demand)
@@ -82,7 +84,7 @@ Variables only — values are NEVER printed:
 - `docs/sop-web3-wallet.md` — Web3 wallet operations SOP
 - `docs/troubleshooting.md` — API error codes, rate limits & network troubleshooting
 - `docs/setup-guide.md` & `docs/network-proxy.md` — Cross-environment deployment & proxy guide
-- `docs/prediction-workflow.md` — Agent analysis, optional Jev, portable contract & configuration
+- `docs/prediction-workflow.md` — Agent collaboration and optional Jev
 
 ## Agent Checklist
 

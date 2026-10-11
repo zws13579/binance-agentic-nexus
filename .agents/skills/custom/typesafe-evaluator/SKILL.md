@@ -21,9 +21,9 @@ description: >-
 - CEX/Web3 开仓、平仓等交易风险判断，以及风险异常、冲突证据复核；
 - 需要 Choice 离散选择、Noul 条件概率或 Score 分级评分的判断。
 
-每次从现场数据动态构建 state、instructions 和 criteria；先确定要回答的问题，再选择题型。预测市场调用 engine.mjs --evaluate 的 auto 模式，其他场景使用本 Skill 的通用 CLI。单纯行情读取、确定性计算、格式检查无需模型分析。已配置表示 Jev 分析可用，具体调用由情景驱动；交易授权仍按对应工作流的人类审批要求执行。
+每次从现场数据动态构建 state、instructions 和 criteria；先确定问题，再选择题型。预测市场调用 engine.mjs --evaluate，永续合约调用项目 scripts/futures_evaluator.mjs --evaluate，均默认 auto；其他情景使用本 Skill 通用 CLI。单纯行情读取、确定性计算、格式检查无需模型。交易授权仍按对应工作流的人类审批要求执行。
 
-项目根目录 `.env` 中未配置非空 `TYPESAFE_API_KEY` 时不使用 Jev；客户端继承的进程级 Key 不会启用它。预测市场应使用 `engine.mjs --evaluate` 的默认 auto 模式，由当前 Agent 填写 agentAssessment 继续。直接调用本 Skill 的真实 API 功能仍会如实报告缺 Key。
+项目根目录 `.env` 中未配置非空 `TYPESAFE_API_KEY` 时不使用 Jev；客户端继承的进程级 Key 不会启用它。业务评估器的默认 auto 模式使用当前 Agent 的 agentAssessment 继续。直接调用本 Skill 真实 API 功能仍如实报告缺 Key。
 
 保留地址配置：`TYPESAFE_ENDPOINT` 优先，其次 `TYPESAFE_BASE_URL` + `/systemone`，均未填写时为 `https://api.typesafe.ai/v1/systemone`。支持 `TYPESAFE_MODEL`，不绑定特定后端构建版本。地址/模型同名配置维持进程变量优先于文件值的兼容行为，Key 的启用开关始终在项目文件中。
 
@@ -109,7 +109,7 @@ description: >-
    * 解释每项证据影响估计的方向与依据；不把传闻当作事实，也不将提示词中的优先级宣称为已验证的数值权重；
 3. **子 Agent 搜索与上下文隔离**：
    * 长任务、上下文已大量累积、多来源调查或关键事实冲突时，使用当前客户端的子 Agent 能力开展搜索和独立核查。传递最小任务快照、事实来源及判定目标，使用新的上下文；主 Agent 汇总并核对引用、时间和结论差异；
-   * 不固定客户端工具名称。能力缺失时如实说明，按来源分段重查；未取得必要证据前保留未知或暂缓结论，不将单上下文分析声称为独立核查；
+   * 按任务的搜索、CLI/API、计算或核查需求选择子 Agent 能力，不能全部限定为仅能搜索的 research 模式；不固定客户端工具名称。能力缺失如实说明，必要证据未取得前保留未知或暂缓，不将单上下文分析声称为独立核查；
 4. **决策看板原始数据穿透**：
    * 呈报人类审批时并列呈现原始事实、Agent 判断与可选 Jev 估计，标注来源与分歧，禁止把模型概率称为已校准胜率。
 
@@ -154,7 +154,7 @@ rm -f tmp/payload.json
 ## 四、真实评估失败处理与 Mock 隔离
 
 - 直接请求 Jev 时，缺少项目 `.env` 的 `TYPESAFE_API_KEY`、网络失败或 API 错误均如实报错。默认请求/响应期限 15 秒；不自动重试或切换到 Mock。
-- 预测市场的 auto 编排在无 Key 时直接使用真实 Agent 分析；Jev 服务故障时，只有已提供合法 Agent 分析才可继续，并公开 Jev 失败状态。显式 jev 模式及非法模型返回不使用该回退。
+- 业务 auto 编排无 Key 时使用真实 Agent 分析。已有合法 Agent 判断时，预测市场公开回退服务故障；永续合约仅回退网络超时/连接失败，不回退 HTTP 拒绝、非法输出或 Mock。显式 jev 不回退，失败状态保留。
 - `--mock` 仅用于本地 schema/调用链测试，输出 `metrics.isMock: true`、中性概率与空方向；任何业务评估器都必须拒绝将其生成交易建议。
 - 预测市场流程中的概率仍须标记来源和校准状态；Mock 或 Jev 自报 confidence 都不能代替历史赛果评分。无独立赔率时可展示未校准 Jev 估计，但不得将其描述为已验证优势。
 
@@ -163,7 +163,7 @@ rm -f tmp/payload.json
 ## 五、场景蓝图参考
 
 直接参考成熟的生产级量化决策模板：[`references/scenario_blueprints.md`](./references/scenario_blueprints.md)
-* 蓝图 1：CEX 现货/合约突破开仓硬风控 (`trading_gatekeeper`)
+* 蓝图 1：CEX 永续多空、多行情独立判断与执行风险分离；见 [CEX SOP](../../../../docs/sop-cex-trading.md)
 * 蓝图 2：Web3 预测市场概率估计与 +EV 评估 (`prediction_probability_estimation`)
 
 > [!NOTE]

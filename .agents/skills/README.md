@@ -99,7 +99,7 @@ git submodule update --init --recursive
 
 ## 四、技能发现与跨客户端使用
 
-支持技能自动发现的客户端可读取下列目录索引；其他客户端直接读取 SKILL.md 并运行 CLI。长任务的子 Agent 搜索与上下文隔离使用当前客户端可用的协作能力，迁移时适配工具接口；业务 CLI/JSON 保持通用。有 Key 时 Agent 按情景自主调用 Jev，无 Key 时继续协作分析。
+支持技能自动发现的客户端可读取下列目录索引；其他客户端直接读取 SKILL.md 并运行 CLI。复杂情景、多来源和长任务使用当前客户端的子 Agent 搜索与独立核查，按实际搜索/CLI/API 能力适配，不固定工具名称或全部 research；业务 CLI/JSON 保持通用。有 Key 时 Agent 按情景自主调用 Jev，无 Key 时继续协作分析。
 
 在根目录 [`.agents/skills.json`](../skills.json) 中已注册多路径扫描入口：
 ```json
