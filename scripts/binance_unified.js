@@ -53,12 +53,13 @@ let timeOffset = null;
 
 // Structured Error Type (Categorized by failure domain)
 class BinanceError extends Error {
-  constructor(message, { code = null, type = 'UNKNOWN', retryable = false } = {}) {
+  constructor(message, { code = null, type = 'UNKNOWN', retryable = false, httpStatus = null } = {}) {
     super(message);
     this.name = 'BinanceError';
     this.code = code;
     this.type = type; // 'NETWORK' | 'RATE_LIMIT' | 'AUTH' | 'MARGIN' | 'PARAMS' | 'AMBIGUOUS_STATE' | 'API_ERROR'
     this.retryable = retryable;
+    this.httpStatus = httpStatus;
     this.status = type === 'AMBIGUOUS_STATE' ? 'UNKNOWN' : 'FAILED';
   }
 }
@@ -145,16 +146,18 @@ function normalizeOrder(raw) {
 // ============================================================================
 // 2. Core Network, Time Sync & Read Retries
 // ============================================================================
-async function httpRequest(url, method='GET', headers={}, retries) {
+async function httpRequest(url, method='GET', headers={}, retries, deadline) {
  const count=method==='GET'?(retries??2):0;
  for(let attempt=0;attempt<=count;attempt++) {
   try {
-   const res=await fetchImpl(url,{method,headers,signal:AbortSignal.timeout(10000)});
+   const remaining=deadline===undefined?10000:Math.min(10000,deadline-now());
+   if(remaining<=0)throw new BinanceError('Read confirmation deadline exceeded',{type:'NETWORK'});
+   const res=await fetchImpl(url,{method,headers,signal:AbortSignal.timeout(Math.max(1,Math.ceil(remaining)))});
    const text=await res.text(); let data;
    try {data=D.parseLossless(text);} catch {throw new BinanceError('Invalid API JSON', {type:method==='GET'?'API_ERROR':'AMBIGUOUS_STATE'});}
    if(data?.code<0 || res.status<200 || res.status>=300) {
     const type=(res.status>=500 && method!=='GET')?'AMBIGUOUS_STATE':res.status===429||res.status===418?'RATE_LIMIT':'API_ERROR';
-    throw new BinanceError('Exchange request rejected'+(data?.code ? ' ['+data.code+'] '+String(data.msg||'') : ' [HTTP '+res.status+']'),{code:data?.code??res.status,type,retryable:method==='GET'&&(res.status>=500||res.status===429)});
+    throw new BinanceError('Exchange request rejected'+(data?.code ? ' ['+data.code+'] '+String(data.msg||'') : ' [HTTP '+res.status+']'),{code:data?.code??res.status,type,httpStatus:res.status,retryable:method==='GET'&&(res.status>=500||res.status===429)});
    }
    if(!data || typeof data!=='object')throw new BinanceError('Invalid API response', {type:method==='GET'?'API_ERROR':'AMBIGUOUS_STATE'});
    return data;
@@ -170,10 +173,11 @@ async function syncTime() {
  if(timeOffset===null) {const result=await httpRequest(`${SPOT_HOST}/api/v3/time`); if(!Number.isFinite(result.serverTime))throw new BinanceError('Server time unknown',{type:'API_ERROR'});timeOffset=result.serverTime-now();}
 }
 function sign(qs) {if(!API_KEY||!SECRET_KEY)throw new BinanceError('Missing BINANCE_API_KEY or BINANCE_SECRET_KEY',{type:'AUTH'});return crypto.createHmac('sha256',SECRET_KEY).update(qs).digest('hex');}
-async function signedReq(host,endpoint,params={},method='GET',retries) {
+async function signedReq(host,endpoint,params={},method='GET',retries,deadline) {
+ if(deadline!==undefined&&timeOffset===null)throw new BinanceError('Clock unavailable for bounded confirmation',{type:'NETWORK'});
  await syncTime();
- const request=()=>{const qs=new URLSearchParams({...params,timestamp:String(now()+timeOffset),recvWindow:'10000'}).toString();return httpRequest(`${host}${endpoint}?${qs}&signature=${sign(qs)}`,method,{'X-MBX-APIKEY':API_KEY},retries);};
- try {return await request();}catch(err){if(err.code!==-1021)throw err;timeOffset=null;await syncTime();return request();}
+ const request=()=>{const qs=new URLSearchParams({...params,timestamp:String(now()+timeOffset),recvWindow:'10000'}).toString();return httpRequest(`${host}${endpoint}?${qs}&signature=${sign(qs)}`,method,{'X-MBX-APIKEY':API_KEY},retries,deadline);};
+ try {return await request();}catch(err){if(err.code!==-1021||deadline!==undefined)throw err;timeOffset=null;await syncTime();return request();}
 }
 
 // ============================================================================
@@ -924,6 +928,52 @@ const Client = {
     return results;
   },
 
+  async _confirmProtectiveLeg(params,algoId) {
+    // Bound the entire read-after-write window, including HTTP timeouts. Never repeat the POST.
+    const deadline=now()+3000;
+    const validate=row=>{
+      let identityValid=false;
+      try{identityValid=!!row&&exchangeId(row.algoId)!==undefined&&(algoId===undefined||exchangeId(row.algoId)===algoId);}catch{}
+      if(!identityValid||row.clientAlgoId!==params.clientAlgoId||row.symbol!==params.symbol||row.side!==params.side||row.positionSide!==params.positionSide||
+        (row.orderType||row.type)!==params.type||row.workingType!==params.workingType||!['NEW','WORKING'].includes(row.algoStatus)||!['true',true].includes(row.closePosition)||
+        !['',null,undefined,'0',0].includes(row.actualOrderId)||![null,undefined,'0',0].includes(row.triggerTime))throw new BinanceError('Protective leg not confirmed active or identity mismatch',{type:'AMBIGUOUS_STATE'});
+      try{if(D.compare(positive(row.triggerPrice),params.triggerPrice)!==0)throw Error();}
+      catch{throw new BinanceError('Protective trigger price mismatch',{type:'AMBIGUOUS_STATE'});}
+      return row;
+    };
+    let lastError;
+    const read=async(endpoint,query)=>{
+      try{
+        const row=await signedReq(FAPI_HOST,endpoint,query,'GET',0,deadline);
+        if(now()>=deadline)throw new BinanceError('Read confirmation deadline exceeded',{type:'NETWORK'});
+        return row;
+      }
+      catch(err){
+        // Authentication, rate limits and malformed responses are not visibility delays.
+        if(err.type==='RATE_LIMIT'||![-2011,-2013].includes(err.code)&&err.type!=='NETWORK'&&!(err.retryable&&err.httpStatus>=500&&err.httpStatus<600))throw err;
+        lastError=err;return null;
+      }
+    };
+    for(let attempt=0;attempt<3&&now()<deadline;attempt++) {
+      const queries=[...(algoId===undefined?[]:[{algoId}]),{clientAlgoId:params.clientAlgoId}];
+      for(const query of queries) {
+        if(now()>=deadline)break;
+        const row=await read('/fapi/v1/algoOrder',query);
+        if(row!==null)return validate(row);
+      }
+      if(now()<deadline) {
+        const rows=await read('/fapi/v1/openAlgoOrders',{symbol:params.symbol});
+        if(rows!==null) {
+          const matches=requireArray(rows,'open algo orders').filter(row=>row&&(row.clientAlgoId===params.clientAlgoId||algoId!==undefined&&String(row.algoId)===algoId));
+          if(matches.length>1)throw new BinanceError('Conflicting protective order identities',{type:'AMBIGUOUS_STATE'});
+          if(matches.length===1)return validate(matches[0]);
+        }
+      }
+      if(attempt<2&&now()<deadline)await sleep(Math.min(200*(attempt+1),deadline-now()));
+    }
+    throw new BinanceError('Protective leg unconfirmed after bounded read-back'+(lastError?' ('+lastError.type+(lastError.code!==null?' '+lastError.code:'')+')':''),{type:'AMBIGUOUS_STATE'});
+  },
+
   async setTPSL({symbol,positionSide,quantity,stopLossPrice,takeProfitPrice,cancelExisting=true,clientAlgoIdPrefix,manageRef,replaceAlgoIds=[]}) {
     const sym=name(symbol),direction=name(positionSide);
     if(stopLossPrice===undefined&&takeProfitPrice===undefined)throw paramsError('Provide at least one protective price');
@@ -960,14 +1010,13 @@ const Client = {
       let created;
       try {created=await this.placeAlgoOrder(params);}catch(err) {
         if(!ambiguous(err)){submission.status='FAILED';throw err;}
-        try{created=await signedReq(FAPI_HOST,'/fapi/v1/algoOrder',{clientAlgoId:params.clientAlgoId});}catch{throw new BinanceError('Protection submission unknown; old protection retained',{type:'AMBIGUOUS_STATE'});}
       }
-      let id;try{id=exchangeId(created?.algoId);}catch{throw new BinanceError('Invalid protective order identifier; reconcile client algo ID',{type:'AMBIGUOUS_STATE'});}
-      submission.algoId=id;submission.status='SUBMITTED';
-      const verified=await signedReq(FAPI_HOST,'/fapi/v1/algoOrder',{algoId:id});
-      let identityValid=false;try{identityValid=exchangeId(verified?.algoId)===id;}catch{}
-      if(!identityValid||verified.clientAlgoId!==params.clientAlgoId||verified.workingType!==base.workingType||!['NEW','WORKING'].includes(verified.algoStatus)||verified.symbol!==sym||verified.positionSide!==mode.wireSide||verified.side!==base.side||(verified.orderType||verified.type)!==type||D.compare(positive(verified.triggerPrice),String(trigger))!==0||!['true',true].includes(verified.closePosition)||
-        !['',null,undefined,'0',0].includes(verified.actualOrderId)||![null,undefined,'0',0].includes(verified.triggerTime))throw new BinanceError('Protective leg not confirmed active',{type:'AMBIGUOUS_STATE'});
+      let id;if(created!==undefined) {
+        try{id=exchangeId(created?.algoId);}catch{throw new BinanceError('Invalid protective order identifier; reconcile client algo ID',{type:'AMBIGUOUS_STATE'});}
+        submission.algoId=id;submission.status='SUBMITTED';
+      }
+      const verified=await this._confirmProtectiveLeg(params,id);
+      submission.algoId=exchangeId(verified.algoId);
       submission.status='CONFIRMED';
       results[key]=verified;
     }
