@@ -85,6 +85,15 @@ function positive(value) { try { const text=D.decimal(value).text;if(!Number.isF
 function name(value) { if(typeof value!=='string'||!value.trim()||!/^[A-Za-z0-9_]+$/.test(value.trim()))throw paramsError('Explicit asset, product or symbol required'); return value.trim().toUpperCase(); }
 function exchangeId(value) {try{return D.idString(value);}catch(e){throw paramsError(e.message);}}
 function owner(order) {return typeof order.clientAlgoId==='string' && /^BAN_[a-f0-9]{24}_(SL|TP)([a-f0-9]{4})?$/.test(order.clientAlgoId);}
+function protectionCovers(row,quantity) {
+ if(['true',true].includes(row.closePosition))return true;
+ if(!['false',false].includes(row.closePosition)||row.timeInForce!=='GTC')return false;
+ const closingSide=row.positionSide==='LONG'&&row.side==='SELL'||row.positionSide==='SHORT'&&row.side==='BUY'||row.positionSide==='BOTH'&&['true',true].includes(row.reduceOnly);
+ try{return closingSide&&D.compare(positive(row.quantity),positive(quantity))>=0;}catch{return false;}
+}
+function protectionSizing(wireSide,quantity) {
+ return quantity===undefined?{closePosition:'true'}:{quantity:positive(quantity),timeInForce:'GTC',...(wireSide==='BOTH'?{reduceOnly:'true'}:{})};
+}
 function ambiguous(err) {return err?.type==='AMBIGUOUS_STATE' || ['TimeoutError','AbortError'].includes(err?.name);}
 function modeFlags(options={}) {
  if(!options||typeof options!=='object'||Array.isArray(options)||['approved','dryRun'].some(k=>options[k]!==undefined&&typeof options[k]!=='boolean'))throw paramsError('Approval and dry-run flags must be booleans');
@@ -602,6 +611,10 @@ const Client = {
       httpRequest(`${FAPI_HOST}/fapi/v1/ticker/price?symbol=${cleanSymbol}`),this.getPositionRisk(cleanSymbol),this.getOpenOrders(cleanSymbol),this.getOpenAlgos(cleanSymbol),this.getFuturesAccount(),
       httpRequest(`${FAPI_HOST}/fapi/v1/depth?symbol=${cleanSymbol}&limit=100`),signedReq(FAPI_HOST,'/fapi/v1/commissionRate',{symbol:cleanSymbol})]);
     const market=positive(ticker.price);if(!Number.isFinite(Number(ticker.time))||Math.abs(now()-Number(ticker.time))>maxAgeMs)throw paramsError('Market price stale or timestamp missing');
+    if(type==='LIMIT') {
+      const marketLot=rules.contract.filters.find(f=>f.filterType==='MARKET_LOT_SIZE');
+      if(!marketLot||!D.onStep(rules.quantity,positive(marketLot.stepSize))||D.compare(rules.quantity,marketLot.minQty)<0||D.compare(rules.quantity,marketLot.maxQty)>0)throw paramsError('LIMIT quantity cannot be fully covered by market protection');
+    }
     const ref=type==='LIMIT'?positive(price):market;_validatePriceBounds(direction,ref,stopLossPrice,takeProfitPrice);
     // Protection is submitted immediately, so both triggers must also be valid at the current market.
     _validatePriceBounds(direction,market,stopLossPrice,takeProfitPrice);
@@ -730,7 +743,8 @@ const Client = {
         else if([row,statusRow].some(a=>!['',null,undefined,'0',0].includes(a.actualOrderId)||![null,undefined,'0',0].includes(a.triggerTime)))reason='Triggered order cannot count as active protection';
         else if(!entry||!mode||typeof mode.dualSidePosition!=='boolean'||row.symbol!==sym||row.positionSide!==(mode.dualSidePosition?direction:'BOTH')||row.side!==(direction==='LONG'?'SELL':'BUY'))reason='Wrong symbol, direction or position mode';
         else if(type!==(row.clientAlgoId.slice(tx.correlationId.length+1,tx.correlationId.length+3)==='SL'?'STOP_MARKET':'TAKE_PROFIT_MARKET'))reason='Wrong protective order type';
-        else if(!['true',true].includes(row.closePosition)||!['true',true].includes(statusRow.closePosition)||row.workingType!=='CONTRACT_PRICE'||statusRow.workingType!==row.workingType)reason='Full close-all protection or trigger basis unverified';
+        else if(![row,statusRow].every(a=>protectionCovers(a,entryTerminal?matchingPosition?absQty(matchingPosition.positionAmt):entry.executedQty:entry.origQty))||row.workingType!=='CONTRACT_PRICE'||statusRow.workingType!==row.workingType)reason='Protection quantity, closing semantics or trigger basis unverified';
+        else if(['true',true].includes(row.closePosition)!==['true',true].includes(statusRow.closePosition)||!['true',true].includes(row.closePosition)&&(D.compare(row.quantity,statusRow.quantity)!==0||D.compare(row.quantity,entry.origQty)>0||row.timeInForce!==statusRow.timeInForce||['true',true].includes(row.reduceOnly)!==['true',true].includes(statusRow.reduceOnly)))reason='Protection size or closing semantics changed or exceeds entry quantity';
         else if(statusRow.side!==row.side||statusRow.positionSide!==row.positionSide||(statusRow.orderType||statusRow.type)!==type||D.compare(positive(row.triggerPrice),positive(statusRow.triggerPrice))!==0)reason='Protection changed during reconciliation';
         else {
           const ref=ticker?.price;if(ref===undefined||ticker.symbol!==sym||!Number.isFinite(Number(ticker.time))||Math.abs(now()-Number(ticker.time))>30000)reason='Fresh contract price unavailable for trigger validation';
@@ -742,23 +756,24 @@ const Client = {
     }
     if(invalidProtection.length)blockers.push('Owned open protection contains invalid or unverified legs');
     const flat=positions?positions.length===0:null,hasFill=filledQuantity===null?null:D.compare(filledQuantity,'0')>0;
-    const covered=matchingPosition?effective.stopLoss.length>0&&effective.takeProfit.length>0:false;
+    const covered=matchingPosition||entryTerminal===false?effective.stopLoss.length>0&&effective.takeProfit.length>0:false;
     if(entryTerminal===false||pendingEntries?.length) {blockers.push('Entry remains pending; fills may still increase');nextActions.push('Handle this request entry remainder with explicit authorization, then reconcile');}
     if(entryTerminal===true&&pendingEntries?.length)blockers.push('Terminal entry conflicts with pending entry snapshot');
     if(hasFill&&matchingPosition&&!covered) {blockers.push('Current position lacks verified owned SL and TP coverage');nextActions.push('Maintain or repair both owned protective legs under explicit authorization, then reconcile');}
     if(hasFill&&flat)nextActions.push('Review triggered leg evidence and closure cause; flat snapshot does not prove rollback was executed');
-    if(flat&&protection?.length) {blockers.push('Flat symbol retains owned active protection');nextActions.push('Clean up owned protection only after authorized flat-state verification');}
+    if(flat&&protection?.length&&entryTerminal!==false) {blockers.push('Flat symbol retains owned active protection');nextActions.push('Clean up owned protection only after authorized flat-state verification');}
+    if(entryTerminal===false&&!covered)blockers.push('Pending entry lacks verified owned SL and TP coverage');
     if(hasFill===false&&positions?.length)blockers.push('Exposure exists despite zero entry fill');
     let status='UNKNOWN',outcome='UNRESOLVED';
     if(!blockers.length&&entryTerminal&&pendingEntries?.length===0) {
       if(hasFill&&matchingPosition&&covered) {status='CONFIRMED';outcome='OPEN_PROTECTED';}
       else if(hasFill&&flat) {status='CONFIRMED';outcome='FLAT_AFTER_FILL';}
       else if(hasFill===false&&flat) {status='FAILED';outcome='ENTRY_TERMINAL_WITHOUT_FILL';}
-    }else if(!queryErrors.length&&entry&&!entryTerminal&&pendingEntries?.length===1&&(!hasFill&&flat||hasFill&&matchingPosition&&covered)&&blockers.every(b=>b==='Entry remains pending; fills may still increase')) {status='SUBMITTED';outcome='ENTRY_PENDING';}
+    }else if(!queryErrors.length&&entry&&!entryTerminal&&pendingEntries?.length===1&&covered&&(!hasFill&&flat||hasFill&&matchingPosition)&&blockers.every(b=>b==='Entry remains pending; fills may still increase')) {status='SUBMITTED';outcome='ENTRY_PENDING';}
     if(!nextActions.length)nextActions.push(status==='CONFIRMED'?'Current state verified; continue position monitoring':'Reconcile missing or conflicting evidence before any further execution');
     nextActions.push('Do not resubmit this entry request ID');
     return {symbol:sym,requestId:tx.requestId,correlationId:tx.correlationId,status,outcome,readOnly:true,entry,entryAccepted:entry?entry.status!=='REJECTED':null,entrySucceeded:hasFill,entryTerminal,filledQuantity,direction,positionMode:mode,positions,matchingPosition,flat,pendingEntries,protection,
-      protectionCoverage:{status:matchingPosition?(covered?'COVERED':'UNVERIFIED'):flat?'NOT_REQUIRED':'UNKNOWN',fullPosition:matchingPosition?absQty(matchingPosition.positionAmt):null,stopLoss:effective.stopLoss,takeProfit:effective.takeProfit,invalid:invalidProtection},
+      protectionCoverage:{status:matchingPosition||entryTerminal===false?(covered?'COVERED':'UNVERIFIED'):flat?'NOT_REQUIRED':'UNKNOWN',fullPosition:matchingPosition?absQty(matchingPosition.positionAmt):null,pendingEntryQuantity:entryTerminal===false?entry.origQty:null,stopLoss:effective.stopLoss,takeProfit:effective.takeProfit,invalid:invalidProtection},
       triggeredProtection,closureCause:hasFill&&flat?(triggeredProtection.some(p=>p.executionStatus==='FILLED')?'OWNED_PROTECTION_EXECUTION_OBSERVED':'UNKNOWN'):null,
       algoHistory:{status:history?'OK':'UNKNOWN',startTime:historyStart,endTime:historyEnd,limit:1000,possiblyTruncated:history?history.length===1000:null,scope:'Bounded recent history with exchange retention; missing records do not prove non-submission'},
       blockers:[...new Set(blockers)],queryErrors,checkedAt:new Date(now()).toISOString(),nextActions,nextAction:nextActions.join('; ')};
@@ -779,7 +794,10 @@ const Client = {
     }
     const plan=await this._entryPreflight(input);
     const entryParams={symbol,side:plan.side,positionSide:plan.wireSide,type:plan.type,quantity:plan.quantity,newClientOrderId:tx.entryClientOrderId,newOrderRespType:'RESULT',...(plan.type==='LIMIT'?{price:plan.price,timeInForce:'GTC'}:{})};
-    if(input.dryRun)return {status:'PREVIEW',dryRun:true,requestId:tx.requestId,plan,requests:{entry:entryParams},readyForApproval:plan.readyForApproval};
+    if(input.dryRun) {
+      const base={algoType:'CONDITIONAL',symbol,side:plan.direction==='LONG'?'SELL':'BUY',positionSide:plan.wireSide,workingType:'CONTRACT_PRICE',...protectionSizing(plan.wireSide,plan.type==='LIMIT'?plan.quantity:undefined)};
+      return {status:'PREVIEW',dryRun:true,requestId:tx.requestId,plan,requests:{entry:entryParams,stopLoss:{...base,type:'STOP_MARKET',triggerPrice:plan.stopLossPrice,clientAlgoId:tx.slClientOrderId},takeProfit:{...base,type:'TAKE_PROFIT_MARKET',triggerPrice:plan.takeProfitPrice,clientAlgoId:tx.tpClientOrderId}},readyForApproval:plan.readyForApproval};
+    }
     if(plan.blockers.length)throw paramsError(plan.blockers.join('; '));
     let entry;
     try{entry=await this.placeOrder(entryParams);}catch(err) {
@@ -792,8 +810,8 @@ const Client = {
       const started=now();let checkedQuantity='0',actualExecutionRisk=null;
       if(D.compare(entry.executedQty,'0')===0&&['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(entry.status))return {status:'FAILED',requestId:tx.requestId,entrySucceeded:false,entryAccepted:true,tpslSucceeded:false,entry,filledQuantity:'0',plan,error:'Entry terminated without a fill'};
       // Use the completed preflight: no position/ticker/rules round trips between entry and stop submission.
-      // Close-all legs cover future partial fills too; they do not need an existing position locally.
-      const protection=await this._submitTPSL({sym:symbol,direction:plan.direction,mode:{wireSide:plan.wireSide},stopLossPrice:plan.stopLossPrice,takeProfitPrice:plan.takeProfitPrice,cancelExisting:false,clientAlgoIdPrefix:tx.correlationId,old:[],externalIds:[]});
+      // LIMIT may still be unfilled: use quantity protection, not position-dependent close-all (GTE).
+      const protection=await this._submitTPSL({sym:symbol,direction:plan.direction,mode:{wireSide:plan.wireSide},quantity:plan.type==='LIMIT'?plan.quantity:undefined,stopLossPrice:plan.stopLossPrice,takeProfitPrice:plan.takeProfitPrice,cancelExisting:false,clientAlgoIdPrefix:tx.correlationId,old:[],externalIds:[]});
       const maxChecks=Math.ceil(waitMs/200)+5;
       for(let checks=0;checks<maxChecks;checks++) {
         positiveOrZero(entry.executedQty);
@@ -845,7 +863,8 @@ const Client = {
     for(const [key,type,trigger] of [['stopLoss','STOP_MARKET',plan.stopLossPrice],['takeProfit','TAKE_PROFIT_MARKET',plan.takeProfitPrice]]) {
       const matches=active.filter(a=>String(a.algoId)===String(protection?.[key]?.algoId)),leg=matches[0];
       if(matches.length!==1||!owner(leg)||leg.clientAlgoId!==protection[key].clientAlgoId||!leg.clientAlgoId.startsWith(tx.correlationId+'_')||leg.symbol!==plan.symbol||leg.positionSide!==plan.wireSide||leg.side!==(plan.direction==='LONG'?'SELL':'BUY')||
-        (leg.orderType||leg.type)!==type||!['NEW','WORKING'].includes(leg.algoStatus)||!['true',true].includes(leg.closePosition)||leg.workingType!=='CONTRACT_PRICE'||
+        (leg.orderType||leg.type)!==type||!['NEW','WORKING'].includes(leg.algoStatus)||!protectionCovers(leg,plan.quantity)||leg.workingType!=='CONTRACT_PRICE'||
+        plan.type==='LIMIT'&&(['true',true].includes(leg.closePosition)||D.compare(leg.quantity,plan.quantity)!==0)||
         !['',null,undefined,'0',0].includes(leg.actualOrderId)||![null,undefined,'0',0].includes(leg.triggerTime)||D.compare(positive(leg.triggerPrice),trigger)!==0)throw new BinanceError('Protective coverage lost; cancel remaining entry and reconcile exposure',{type:'AMBIGUOUS_STATE'});
     }
   },
@@ -947,7 +966,8 @@ const Client = {
       let identityValid=false;
       try{identityValid=!!row&&exchangeId(row.algoId)!==undefined&&(algoId===undefined||exchangeId(row.algoId)===algoId);}catch{}
       if(!identityValid||row.clientAlgoId!==params.clientAlgoId||row.symbol!==params.symbol||row.side!==params.side||row.positionSide!==params.positionSide||
-        (row.orderType||row.type)!==params.type||row.workingType!==params.workingType||!['NEW','WORKING'].includes(row.algoStatus)||!['true',true].includes(row.closePosition)||
+        (row.orderType||row.type)!==params.type||row.workingType!==params.workingType||!['NEW','WORKING'].includes(row.algoStatus)||
+        (params.quantity===undefined?!['true',true].includes(row.closePosition):!protectionCovers(row,params.quantity)||!['false',false].includes(row.closePosition)||D.compare(row.quantity,params.quantity)!==0)||
         !['',null,undefined,'0',0].includes(row.actualOrderId)||![null,undefined,'0',0].includes(row.triggerTime))throw new BinanceError('Protective leg not confirmed active or identity mismatch',{type:'AMBIGUOUS_STATE'});
       try{if(D.compare(positive(row.triggerPrice),params.triggerPrice)!==0)throw Error();}
       catch{throw new BinanceError('Protective trigger price mismatch',{type:'AMBIGUOUS_STATE'});}
@@ -1003,7 +1023,7 @@ const Client = {
     const externalIds=replaceAlgoIds.map(exchangeId),old=await this.getOpenAlgos(sym);
     return this._submitTPSL({sym,direction,mode,stopLossPrice,takeProfitPrice,cancelExisting,clientAlgoIdPrefix,old,externalIds});
   },
-  async _submitTPSL({sym,direction,mode,stopLossPrice,takeProfitPrice,cancelExisting,clientAlgoIdPrefix,old,externalIds}) {
+  async _submitTPSL({sym,direction,mode,quantity,stopLossPrice,takeProfitPrice,cancelExisting,clientAlgoIdPrefix,old,externalIds}) {
     const related=old.filter(x=>x.symbol===sym&&x.positionSide===mode.wireSide&&x.side===(direction==='LONG'?'SELL':'BUY')&&owner(x));
     const prefixes=[...new Set(related.map(x=>x.clientAlgoId.slice(0,28)))];
     if(!clientAlgoIdPrefix&&prefixes.length>1)throw paramsError('Multiple protection request prefixes; specify the request ID to maintain');
@@ -1011,7 +1031,8 @@ const Client = {
     if(!/^BAN_[a-f0-9]{24}$/.test(prefix))throw paramsError('Invalid protection ownership prefix');
     const priorIds=old.filter(x=>x.symbol===sym&&x.positionSide===mode.wireSide&&x.side===(direction==='LONG'?'SELL':'BUY')&&(owner(x)&&x.clientAlgoId.startsWith(prefix+'_')||externalIds.includes(String(x.algoId)))).map(x=>String(x.algoId));
     const results={symbol:sym,correlationId:prefix,status:'SUBMITTED',cancelled:[],submissions:[],retainedOldAlgoIds:priorIds,unknownCancellationAlgoIds:[],oldProtectionRetained:priorIds.length>0};
-    const base={algoType:'CONDITIONAL',symbol:sym,side:direction==='SHORT'?'BUY':'SELL',positionSide:mode.wireSide,closePosition:'true',workingType:'CONTRACT_PRICE'};
+    const sizing=protectionSizing(mode.wireSide,quantity);
+    const base={algoType:'CONDITIONAL',symbol:sym,side:direction==='SHORT'?'BUY':'SELL',positionSide:mode.wireSide,...sizing,workingType:'CONTRACT_PRICE'};
     let pendingLeg=null,pendingCancellation=null;
     try {
     for(const [key,type,trigger] of [['stopLoss','STOP_MARKET',stopLossPrice],['takeProfit','TAKE_PROFIT_MARKET',takeProfitPrice]]) {
