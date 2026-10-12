@@ -8,12 +8,21 @@
 
 | 错误码 | 错误提示 (Message) | 根因分析 | 客户端自愈与排查方案 |
 |:---|:---|:---|:---|
-| **-1021** | `Timestamp for this request is outside of the recvWindow` | 本地系统时钟与币安服务器产生漂移（> 1000ms） | 客户端底层内置自愈：自动同步 `/api/v3/time` 计算并更新 `timeOffset`，无感重新签名重试。 |
-| **-1106** | `Parameter 'reduceOnly' sent when not required` | 持仓模式冲突。在双向持仓（Hedge Mode）下平仓不能传 `reduceOnly`；单向持仓则需传 `true`。 | `closePosition` 已做自适应分流：Hedge 模式仅传 `positionSide`，One-way 模式传 `reduceOnly: true`。 |
-| **-2019** | `Margin is insufficient` | 当前可用保证金不足以支持本次开仓或挂单 | 1. 降低杠杆或缩减下单名义价值；<br/>2. 运行 `node scripts/binance_unified.js status` 查验可用余额；<br/>3. 检查是否存在同方向未成交挂单占用了冻结保证金。 |
-| **-4061** | `Order's position side does not match user's setting` | 委托的 `positionSide` 与当前账户持仓模式（单向/双向）不匹配 | 1. 运行 `node scripts/binance_unified.js position-mode` 查看当前模式；<br/>2. 双向持仓必须严格指定 `LONG` 或 `SHORT`，单向持仓必须为 `BOTH`。 |
-| **-2013** | `Order does not exist` | 查询或撤单时目标 OrderId 不存在 | 幂等键反查中出现此错误属于正常安全分支，证明网络超时下订单并未进入撮合引擎。 |
-| **429 / 418** | `IP Rate Limit Exceeded / IP banned` | 触发币安接口 1 分钟权重限制（1200 weight/min） | 1. 客户端已内置自适应反压：`x-mbx-used-weight-1m > 1050` 时自动微减速；<br/>2. 捕获 429 时读取 `Retry-After` 头，强制休眠指定秒数后再试。 |
+| **-1021** | `Timestamp for this request is outside of the recvWindow` / `Timestamp for this request was 1000ms ahead of the server's time` | 时间戳超出 `recvWindow`，可能是本机时钟偏差、请求延迟、时间戳单位错误，或时间戳比服务器快 1000ms 以上。 | 校准系统时间并确认毫秒/微秒单位。项目 CLI 会同步 `/api/v3/time`，收到明确 `-1021` 后重新签名并重试一次；当前发送 `recvWindow=10000`。现货官方建议使用不超过 5000ms 的较小窗口，最大 60000ms；合约请求以对应接口文档为准。 |
+| **-1022** | `Signature for this request is not valid` | 签名与实际请求参数不一致，或 API Key / Secret Key 不匹配。 | 核对签名所用 query/body 字符串、参数编码与密钥配对；不要输出或记录密钥值。 |
+| **-1106** | `Parameter '%s' sent when not required` | 请求包含该接口或当前请求场景不需要的参数；不只表示持仓模式冲突。 | 按具体接口文档删去多余参数。USDⓈ-M 双向持仓订单不能发送 `reduceOnly`；项目 `close-position` 会按模式选择 `positionSide`，并只在单向模式发送 `reduceOnly`。 |
+| **-2010** | `NEW_ORDER_REJECTED`（现货撮合引擎拒单） | 通用拒单码；具体原因通常在返回的 `msg` 中，例如余额不足、交易对未开放或订单参数不符合要求。 | 先看完整错误消息，再核对余额、交易对状态及 `exchangeInfo` 中的价格/数量过滤器；不要只凭错误码猜原因。 |
+| **-2013** | `Order does not exist` | 按给定交易对和订单 ID 查询不到订单；也可能是标识不匹配或订单已不在可查询范围。 | 这**不能证明**超时订单没有成交。先用交易对和订单 ID/客户端订单 ID 查询；本项目可运行 `node scripts/binance_unified.js reconcile <symbol> --request-id <id>`。状态未确认前不要盲目重发。 |
+| **-2014 / -2015** | `API-key format invalid` / `Invalid API-key, IP, or permissions for action` | Key 格式错误，或 Key、IP 白名单、接口权限不符合请求要求。 | 检查环境变量是否配置、Key 是否有效、IP 白名单及读取/交易权限；仅检查配置状态，不打印凭据。 |
+| **-2019** | `Margin is insufficient` | 可用保证金不足以覆盖下单所需初始保证金及相关占用。 | 缩小数量/名义价值；运行 `node scripts/binance_unified.js status` 检查可用余额，并检查当前保证金模式和未成交订单占用。单纯降低杠杆可能提高同等名义价值所需的初始保证金。 |
+| **-4061** | `Order's position side does not match user's setting` | 订单的 `positionSide` 与账户单向/双向持仓模式不匹配。 | 运行 `node scripts/binance_unified.js position-mode` 查询模式；单向模式使用 `BOTH`，双向模式明确使用 `LONG` 或 `SHORT`。 |
+| **-4062** | `Invalid or improper reduceOnly value` | `reduceOnly` 值或用法不符合当前持仓模式/订单场景。 | 双向模式移除 `reduceOnly`；单向模式确认值和订单方向确实用于减少持仓，并核对现有委托是否冲突。 |
+| **-1007 / HTTP 5XX** | `Timeout waiting for response ... execution status unknown` / 服务端错误 | 写请求超时可能是未知状态；现货 5XX 也可能表示执行状态未知。USDⓈ-M HTTP 503 要结合消息区分：`Unknown error...` 为未知状态，`Service Unavailable.` 为确定失败。 | 未知状态时不要立即重发，先通过用户数据流、订单查询或项目的 `reconcile` 命令核对；明确失败时按官方说明退避后重试。项目写请求不会自动重发。 |
+| **429 / 418** | `Too many requests` / `IP banned` | 触发动态请求权重或下单频率限制；反复违反 429 或不退避会导致 IP 被暂时封禁为 418。请求权重按 IP 计，下单频率按账户计，两者不是同一额度。 | 若响应含 `Retry-After`，按该值等待；现货 418/429 会提供此响应头。通过 `/api/v3/exchangeInfo` 或 `/fapi/v1/exchangeInfo` 查询当前限制。项目只读 GET 对 429/5XX 最多额外重试两次，固定等待 400/800ms；写请求不重试，当前代码未读取 `Retry-After` 或使用权重阈值自动降速。 |
+| **HTTP 403** | WAF blocked request | 请求触发 Web Application Firewall 限制或安全规则，不等同于普通 429。 | 检查请求频率、参数及来源网络；停止重复发送相同请求，必要时检查 Binance 支持渠道。 |
+| **-1008** | `Request throttled by system-level protection`（USDⓈ-M） | 系统级并发保护触发，通常是节点过载。 | 降低并发并退避后再试；此错误下减仓/平仓类请求享有例外。 |
+
+官方依据：[现货错误码](https://developers.binance.com/en/docs/products/spot/errors)、[现货 REST 通用信息](https://developers.binance.com/en/docs/products/spot/rest-api)、[USDⓈ-M 错误码](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/error-code)、[USDⓈ-M REST 通用信息](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info)。
 
 ---
 
