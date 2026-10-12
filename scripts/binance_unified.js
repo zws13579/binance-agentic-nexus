@@ -603,6 +603,8 @@ const Client = {
       httpRequest(`${FAPI_HOST}/fapi/v1/depth?symbol=${cleanSymbol}&limit=100`),signedReq(FAPI_HOST,'/fapi/v1/commissionRate',{symbol:cleanSymbol})]);
     const market=positive(ticker.price);if(!Number.isFinite(Number(ticker.time))||Math.abs(now()-Number(ticker.time))>maxAgeMs)throw paramsError('Market price stale or timestamp missing');
     const ref=type==='LIMIT'?positive(price):market;_validatePriceBounds(direction,ref,stopLossPrice,takeProfitPrice);
+    // Protection is submitted immediately, so both triggers must also be valid at the current market.
+    _validatePriceBounds(direction,market,stopLossPrice,takeProfitPrice);
     const blockers=[];if(account.canTrade!==true)blockers.push('Trading permission disabled or unknown');if(positions.length)blockers.push('Existing position: adding, hedging and reversing are disabled');if(orders.length)blockers.push('Pending entry order exists');if(algos.length)blockers.push('Existing algorithm orders require reconciliation');
     const q=rules.quantity,notional=D.multiply(q,ref);
     if(D.compare(notional,rules.minNotional)<0)throw paramsError('Order below minimum notional');
@@ -787,17 +789,21 @@ const Client = {
     }
     let knownFilledQuantity=entry.executedQty;
     try {
-      const started=now();let protectedQuantity='0',protection=null,actualExecutionRisk=null;
+      const started=now();let checkedQuantity='0',actualExecutionRisk=null;
+      if(D.compare(entry.executedQty,'0')===0&&['CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(entry.status))return {status:'FAILED',requestId:tx.requestId,entrySucceeded:false,entryAccepted:true,tpslSucceeded:false,entry,filledQuantity:'0',plan,error:'Entry terminated without a fill'};
+      // Use the completed preflight: no position/ticker/rules round trips between entry and stop submission.
+      // Close-all legs cover future partial fills too; they do not need an existing position locally.
+      const protection=await this._submitTPSL({sym:symbol,direction:plan.direction,mode:{wireSide:plan.wireSide},stopLossPrice:plan.stopLossPrice,takeProfitPrice:plan.takeProfitPrice,cancelExisting:false,clientAlgoIdPrefix:tx.correlationId,old:[],externalIds:[]});
       const maxChecks=Math.ceil(waitMs/200)+5;
       for(let checks=0;checks<maxChecks;checks++) {
         positiveOrZero(entry.executedQty);
         if(D.compare(entry.executedQty,knownFilledQuantity)<0)throw new BinanceError('Cumulative executed quantity regressed; reconcile before further action',{type:'AMBIGUOUS_STATE'});
         knownFilledQuantity=entry.executedQty;
-        if(D.compare(entry.executedQty,protectedQuantity)>0) {
+        this._assertEntryProtection(plan,tx,protection,await this.getOpenAlgos(symbol));
+        if(D.compare(entry.executedQty,checkedQuantity)>0) {
           const snapshot=await this.getPositionRisk(symbol),mode={hedge:plan.hedge};const pos=this._matchPosition(snapshot,plan.direction,mode);
           if(!pos)throw new BinanceError('Filled entry without a confirmed position',{type:'AMBIGUOUS_STATE'});
-          protection=await this.setTPSL({symbol,positionSide:plan.direction,quantity:absQty(pos.positionAmt),stopLossPrice:plan.stopLossPrice,takeProfitPrice:plan.takeProfitPrice,clientAlgoIdPrefix:tx.correlationId,manageRef:entry.avgPrice&&Number(entry.avgPrice)>0?entry.avgPrice:plan.referencePrice});
-          protectedQuantity=entry.executedQty;
+          checkedQuantity=entry.executedQty;
           const fillPrice=Number(entry.avgPrice)>0?positive(entry.avgPrice):positive(pos.entryPrice);
           _validatePriceBounds(plan.direction,fillPrice,plan.stopLossPrice,plan.takeProfitPrice);
           actualExecutionRisk=executionRisk(plan.direction,entry.executedQty,fillPrice,plan.stopLossPrice,plan.commissionRate,plan.referencePrice,plan.leverage);
@@ -812,7 +818,6 @@ const Client = {
       const fresh=await this.getOrder(symbol,{orderId:entry.orderId});
       if(D.compare(fresh.executedQty,knownFilledQuantity)<0)throw new BinanceError('Final cumulative executed quantity regressed',{type:'AMBIGUOUS_STATE'});
       if(!['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(fresh.status))throw new BinanceError('Entry remains pending',{type:'AMBIGUOUS_STATE'});
-      if(D.compare(fresh.executedQty,protectedQuantity)>0)throw new BinanceError('Fill increased after last protection update',{type:'AMBIGUOUS_STATE'});
       const positions=await this.getPositionRisk(symbol),pos=this._matchPosition(positions,plan.direction,{hedge:plan.hedge});
       if(D.compare(fresh.executedQty,'0')>0 && !pos)throw new BinanceError('Position disappeared; reconcile triggered protection',{type:'AMBIGUOUS_STATE'});
       if(pos&&D.compare(fresh.executedQty,'0')>0) {
@@ -822,19 +827,26 @@ const Client = {
         const finalViolations=executionRiskBlockers(actualExecutionRisk,input,plan.availableMarginBefore??undefined,plan.leverage);
         if(finalViolations.length)throw paramsError('Final fill violates approved limits: '+finalViolations.join('; '));
         if(D.compare(absQty(pos.positionAmt),fresh.executedQty)!==0)throw new BinanceError('Current exposure differs from this entry fill; reconcile attribution',{type:'AMBIGUOUS_STATE'});
-        const active=await this.getOpenAlgos(symbol);
-        for(const [key,type,trigger] of [['stopLoss','STOP_MARKET',plan.stopLossPrice],['takeProfit','TAKE_PROFIT_MARKET',plan.takeProfitPrice]]) {
-          const leg=active.find(a=>String(a.algoId)===String(protection?.[key]?.algoId));
-          if(!leg||!owner(leg)||!leg.clientAlgoId.startsWith(tx.correlationId+'_')||leg.symbol!==symbol||leg.positionSide!==plan.wireSide||leg.side!==(plan.direction==='LONG'?'SELL':'BUY')||
-            (leg.orderType||leg.type)!==type||!['NEW','WORKING'].includes(leg.algoStatus)||!['true',true].includes(leg.closePosition)||leg.workingType!=='CONTRACT_PRICE'||
-            !['',null,undefined,'0',0].includes(leg.actualOrderId)||![null,undefined,'0',0].includes(leg.triggerTime)||D.compare(positive(leg.triggerPrice),trigger)!==0)throw new BinanceError('Final protective coverage could not be verified',{type:'AMBIGUOUS_STATE'});
-        }
+        this._assertEntryProtection(plan,tx,protection,await this.getOpenAlgos(symbol));
       }
-      if(D.compare(fresh.executedQty,'0')===0)return {status:'FAILED',requestId:tx.requestId,correlationId:tx.correlationId,entrySucceeded:false,entryAccepted:true,tpslSucceeded:false,entry:fresh,filledQuantity:'0',plan,error:'Entry terminated without a fill'};
+      if(D.compare(fresh.executedQty,'0')===0) {
+        if(positions.length)throw new BinanceError('Unexpected exposure after unfilled entry',{type:'AMBIGUOUS_STATE'});
+        const cancelledAlgos=await this._clearOwnedProtection(symbol,plan.wireSide,tx.correlationId);
+        return {status:'FAILED',requestId:tx.requestId,correlationId:tx.correlationId,entrySucceeded:false,entryAccepted:true,tpslSucceeded:false,entry:fresh,filledQuantity:'0',plan,cancelledAlgos,error:'Entry terminated without a fill'};
+      }
       return {status:'CONFIRMED',requestId:tx.requestId,correlationId:tx.correlationId,entrySucceeded:D.compare(fresh.executedQty,'0')>0,entryAccepted:true,tpslSucceeded:!!protection,entry:fresh,tpsl:protection,filledQuantity:fresh.executedQty,actualExecutionRisk,plan};
     }catch(err){
       if(D.compare(entry.executedQty,knownFilledQuantity)<0)return {status:'UNKNOWN',requestId:tx.requestId,entrySucceeded:D.compare(knownFilledQuantity,'0')>0,knownFilledQuantity,error:err.message,nextAction:'Reconcile inconsistent cumulative fills; protection retained, do not resubmit'};
       return this._rollbackEntry(symbol,plan.direction,entry,tx,err);
+    }
+  },
+  _assertEntryProtection(plan,tx,protection,active) {
+    requireArray(active,'active protection');
+    for(const [key,type,trigger] of [['stopLoss','STOP_MARKET',plan.stopLossPrice],['takeProfit','TAKE_PROFIT_MARKET',plan.takeProfitPrice]]) {
+      const matches=active.filter(a=>String(a.algoId)===String(protection?.[key]?.algoId)),leg=matches[0];
+      if(matches.length!==1||!owner(leg)||leg.clientAlgoId!==protection[key].clientAlgoId||!leg.clientAlgoId.startsWith(tx.correlationId+'_')||leg.symbol!==plan.symbol||leg.positionSide!==plan.wireSide||leg.side!==(plan.direction==='LONG'?'SELL':'BUY')||
+        (leg.orderType||leg.type)!==type||!['NEW','WORKING'].includes(leg.algoStatus)||!['true',true].includes(leg.closePosition)||leg.workingType!=='CONTRACT_PRICE'||
+        !['',null,undefined,'0',0].includes(leg.actualOrderId)||![null,undefined,'0',0].includes(leg.triggerTime)||D.compare(positive(leg.triggerPrice),trigger)!==0)throw new BinanceError('Protective coverage lost; cancel remaining entry and reconcile exposure',{type:'AMBIGUOUS_STATE'});
     }
   },
   async _cancelAndVerifyEntry(symbol,entry) {
@@ -989,6 +1001,9 @@ const Client = {
     // Close-all protective legs track the full direction through partial fills and cannot reverse exposure.
     if(typeof cancelExisting!=='boolean'||!Array.isArray(replaceAlgoIds))throw paramsError('Invalid protection replacement options');
     const externalIds=replaceAlgoIds.map(exchangeId),old=await this.getOpenAlgos(sym);
+    return this._submitTPSL({sym,direction,mode,stopLossPrice,takeProfitPrice,cancelExisting,clientAlgoIdPrefix,old,externalIds});
+  },
+  async _submitTPSL({sym,direction,mode,stopLossPrice,takeProfitPrice,cancelExisting,clientAlgoIdPrefix,old,externalIds}) {
     const related=old.filter(x=>x.symbol===sym&&x.positionSide===mode.wireSide&&x.side===(direction==='LONG'?'SELL':'BUY')&&owner(x));
     const prefixes=[...new Set(related.map(x=>x.clientAlgoId.slice(0,28)))];
     if(!clientAlgoIdPrefix&&prefixes.length>1)throw paramsError('Multiple protection request prefixes; specify the request ID to maintain');
