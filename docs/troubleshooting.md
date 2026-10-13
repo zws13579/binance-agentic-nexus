@@ -8,7 +8,7 @@
 
 | 错误码 | 错误提示 (Message) | 根因分析 | 客户端自愈与排查方案 |
 |:---|:---|:---|:---|
-| **-1021** | `Timestamp for this request is outside of the recvWindow` / `Timestamp for this request was 1000ms ahead of the server's time` | 时间戳超出 `recvWindow`，可能是本机时钟偏差、请求延迟、时间戳单位错误，或时间戳比服务器快 1000ms 以上。 | 校准系统时间并确认毫秒/微秒单位。项目 CLI 会同步 `/api/v3/time`，收到明确 `-1021` 后重新签名并重试一次；当前发送 `recvWindow=10000`。现货官方建议使用不超过 5000ms 的较小窗口，最大 60000ms；合约请求以对应接口文档为准。 |
+| **-1021** | `Timestamp for this request is outside of the recvWindow` / `Timestamp for this request was 1000ms ahead of the server's time` | 时间戳超出 `recvWindow`，可能是本机时钟偏差、请求延迟、时间戳单位错误，或时间戳比服务器快 1000ms 以上。 | 校准系统时间并确认毫秒/微秒单位。项目 CLI 会同步 `/api/v3/time`，收到明确 `-1021` 后重新签名并重试一次；当前发送 `recvWindow=10000`。现货官方建议使用不超过 5000ms 的较小窗口，最大 60000ms；合约请求以对应接口文档为准。带截止时间的保护单确认查询遇到 `-1021` 不重试，直接以 `NETWORK` 失败收尾；此时按提交结果未知处理，用原 `clientAlgoId` 去 `reconcile`。 |
 | **-1022** | `Signature for this request is not valid` | 签名与实际请求参数不一致，或 API Key / Secret Key 不匹配。 | 核对签名所用 query/body 字符串、参数编码与密钥配对；不要输出或记录密钥值。 |
 | **-1106** | `Parameter '%s' sent when not required` | 请求包含该接口或当前请求场景不需要的参数；不只表示持仓模式冲突。 | 按具体接口文档删去多余参数。USDⓈ-M 双向持仓订单不能发送 `reduceOnly`；项目 `close-position` 会按模式选择 `positionSide`，并只在单向模式发送 `reduceOnly`。 |
 | **-2010** | `NEW_ORDER_REJECTED`（现货撮合引擎拒单） | 通用拒单码；具体原因通常在返回的 `msg` 中，例如余额不足、交易对未开放或订单参数不符合要求。 | 先看完整错误消息，再核对余额、交易对状态及 `exchangeInfo` 中的价格/数量过滤器；不要只凭错误码猜原因。 |
@@ -88,7 +88,11 @@
 | `fetch failed` / `ECONNRESET` | 本地代理未开启或 TUN 未接管流量 | 1. 确认代理客户端处于运行状态；<br/>2. 确认 `.env` 中 `HTTP_PROXY` / `HTTPS_PROXY` 配置正确；<br/>3. `binance_unified.js` 会自动将 `.env` 代理注入 `process.env` 供原生 fetch 使用。 |
 | `NODE_TLS_REJECT_UNAUTHORIZED` | 端口代理自签名证书被拦截 | 在仅使用端口代理（非 TUN）时，挂载 `node --import ./scripts/proxy_bootstrap.mjs <script>`。 |
 | `Unable to load credentials` / `Missing BINANCE_API_KEY or BINANCE_SECRET_KEY` | 凭据未加载，或 `.env` 未放置在工作目录 | 脚本从项目根目录运行时自动加载 `.env`；确认文件存在且包含变量名（不打印值）。运行 `node scripts/binance_unified.js status` 会最先暴露这个问题。 |
-| 请求很慢或被中途掐断 | 单次请求超过 10 秒超时 | `httpRequest` 对所有请求使用 `AbortSignal.timeout(10000)`。只读请求会自动重试，写请求超时后必须对账，不能直接重发。 |
+| 请求很慢或被中途掐断 | 单次请求超过 10 秒超时 | `httpRequest` 对所有请求使用 `AbortSignal.timeout(10000)`，并接受可选的截止时间参数。只读请求会自动重试，写请求超时后必须对账，不能直接重发。 |
+| `Read confirmation deadline exceeded` / `Protective leg unconfirmed after bounded read-back` | 保护单提交后的读回确认窗口已用尽 | 保护单每腿提交后有 3 秒、最多 3 轮只读确认：先按 `algoId` 查，再按 `clientAlgoId` 查，最后查同币活动保护单列表；该窗口包含查询超时，`-2013`、`-2011`、网络错误和可重试的 5xx 都只算暂时查不到。超时后按“提交结果未知”处理，保留原 `clientAlgoId` 去 `reconcile`，不要重发保护单。 |
+| `Clock unavailable for bounded confirmation` | 时钟未同步时就进入有界确认窗口 | 先跑一次普通命令让 `timeOffset` 建立，再执行需要保护单确认的操作。 |
+| `wait-ms must be a nonnegative safe integer; zero is only valid for LIMIT` | `--wait-ms` 取值不符合约束 | `0` 只对 LIMIT 有意义（保留 GTC 挂单），MARKET 必须为正整数。 |
+| `LIMIT quantity cannot be fully covered by market protection` | LIMIT 数量无法被市价保护单全额覆盖 | 按该合约 `MARKET_LOT_SIZE` 的 `stepSize`/`minQty`/`maxQty` 调整数量，否则保护单覆盖不了全部挂单量。 |
 
 ---
 
@@ -116,3 +120,5 @@
 4. 频控相关（429、418、`-1003`、`-1015`）先降频和退避，再检查是否该改用 WebSocket。
 5. 保证金和杠杆类报错（`-2019`、`-2027`、`-2028`、`-4164`）用 `node scripts/binance_unified.js status` 看余额与占用，缩小名义价值比盲目调杠杆更可靠。
 6. 持仓模式类报错（`-4061`、`-4062`、`-4067`、`-4068`）用 `node scripts/binance_unified.js position-mode` 确认当前模式，并注意切换前必须没有开放委托和持仓。
+7. `open-tpsl` 用 LIMIT 且不传 `--wait-ms` 时，入场单以 GTC 挂在交易所，保护单在入场被接受后立即提交，返回 `SUBMITTED` 与 `outcome: ENTRY_PENDING`。这是预期状态，不是故障：此时没有后台监控在跑，保护单也不会取消剩余挂单。想按超时撤单就传正的 `--wait-ms`。
+8. 保护单的确认状态以 `reconcile` 的 `protectionCoverage` 为准。LIMIT 未成交时它按挂单数量核对（`pendingEntryQuantity`），接受数量型保护（GTC、单向模式 `reduceOnly=true`）；成交后按持仓数量核对。显示 `UNVERIFIED` 时先看 `blockers` 和 `invalid`，不要直接重发。
