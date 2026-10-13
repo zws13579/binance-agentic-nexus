@@ -203,7 +203,7 @@ Hedge Mode 使用 LONG/SHORT，One-Way 使用 BOTH 并按仓位数量符号识�
 ```bash
 # 风险上限须来自用户授权或明确配置
 node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> MARKET <sl> <tp> --dry-run --request-id <id> --risk-usd <risk> --max-notional-usd <notional> --max-leverage <leverage> --max-slippage-bps <bps>
-node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> LIMIT <price> <sl> <tp> --dry-run --request-id <id> --wait-ms 30000 --risk-usd <risk> --max-notional-usd <notional> --max-leverage <leverage> --max-slippage-bps <bps>
+node scripts/binance_unified.js open-tpsl <symbol> <BUY|SELL> <LONG|SHORT> <qty> LIMIT <price> <sl> <tp> --dry-run --request-id <id> --risk-usd <risk> --max-notional-usd <notional> --max-leverage <leverage> --max-slippage-bps <bps>
 node scripts/binance_unified.js reconcile <symbol> --request-id <id>
 node scripts/binance_unified.js set-tpsl <symbol> <LONG|SHORT> <slPrice|-> <tpPrice|-> [qty] [--request-id <id>] [--replace-algo-id <id>]
 node scripts/binance_unified.js close-position <symbol> [LONG|SHORT]
@@ -219,9 +219,11 @@ MARKET 及可立即成交的 LIMIT 预检查使用精确盘口加权成本计算
 
 入场、保护、补偿是**串行请求**，存在时间窗口，不宣称原子交易。入场委托受理后立即提交止损、止盈，不等待首次成交；复用入场前已校验的模式、价格和交易规则，避免在提交止损前重复查询仓位。LIMIT 预挂保护使用完整计划 quantity 和 GTC，不传 closePosition；双向模式使用 SELL/LONG 或 BUY/SHORT，单向模式须带 reduceOnly=true，交易所拒绝时进入补偿，不能去掉只减仓限制重试。入场前同时核验 LOT_SIZE 和保护单 MARKET_LOT_SIZE，不向下缩减保护数量。MARKET 成交后的保护及已有仓位维护继续使用 closePosition 全仓保护。后续部分成交沿用双腿并重算实际风险。保护价格须同时符合计划入场价和当前市场价，不能提交已经达到触发条件的预挂保护。
 
-LIMIT 默认 GTC、等待 30 秒，可用 --wait-ms 配置。等待期间持续核对双腿有效性；任一腿已触发、失效或无法核实，先撤入场余量并确认终态，再处理剩余仓位。超时撤余量，再查撤单期间新增成交和最终保护覆盖；无成交且可信空仓后清理本请求预挂保护，不返回成功后遗留无人管理入场单。平仓前先处理本流程入场余单。
+LIMIT 默认 GTC，不设置客户端撤单期限（等同 --wait-ms 0）。入场受理后立即提交并核实双腿保护，再查询最新成交状态及仓位：仍未成交或部分成交时返回 SUBMITTED/ENTRY_PENDING，保留交易所上的入场余量与保护单，不因脚本结束撤单，也不把挂单中报告为全部成交。适用于等待回踩、反弹或区间边缘的入场计划；委托何时撤销应由交易计划失效条件和用户指令决定。
 
-已经就位的保护由交易所执行，无需 Agent 再醒来补挂；但独立保护单不会自动撤销未成交的入场余单，整个流程也不具备交易所原子关联。进程被强制终止、断电或断网时，客户端无法保证余单清理；恢复后须先 reconcile，不能把预挂保护等同于可无人监管地长期保留 GTC 入场单。
+只有显式指定正数 --wait-ms 才启用等待到期撤余量，例如 --wait-ms 3600000 表示本次进程等待一小时；取消原先 120 秒上限。该参数是客户端计时，不是交易所 GTD，进程退出后不会继续定时撤单。等待期间持续核对双腿有效性；任一腿已触发、失效或无法核实，先撤入场余量并确认终态，再处理剩余仓位。超时撤余量后核查新增成交和保护覆盖；无成交且可信空仓后清理本请求保护。MARKET 保留原有成交确认等待流程。
+
+已经就位的保护由交易所执行，无需 Agent 再醒来补挂；但独立保护单不会自动撤销未成交的入场余单，整个流程也不具备交易所原子关联。进程被强制终止、断电或断网时，客户端无法保证余单清理；默认 GTC 返回后不启动后台监控，executionPolicy.monitoringActive=false。应按交易计划复核，撤单或保护触发后核查入场余量、实际仓位和剩余保护；进程恢复后须先 reconcile。只读对账不会自动撤余单，预挂保护也不提供原子关联。
 
 保护单提交后，每腿最多用 3 秒、3 轮只读核对：优先按 algoId 查询，暂时查不到时改用 clientAlgoId 和同币活动保护单列表。提交结果不确定时按原 clientAlgoId 核对，不重发保护单。只有唯一匹配且身份、方向、触发价、触发基准、保护方式和未触发的有效状态全部通过才确认；指定数量的保护还须确认数量、GTC 及平仓方向，单向模式必须确认 reduceOnly=true；身份冲突或已失效立即失败，持续查不到仍进入原有补偿流程。该窗口包含查询超时，不把单次 -2013 直接等同于创建失败。
 

@@ -780,7 +780,11 @@ const Client = {
   },
   async openPositionWithTPSL(input) {
     modeFlags(input);const symbol=name(input.symbol),tx=new TransactionContext(input.requestId||input.clientOrderId);
-    const waitMs=Number(input.waitMs??30000);if(!Number.isInteger(waitMs)||waitMs<1||waitMs>120000)throw paramsError('wait-ms must be 1..120000');
+    const isLimit=(input.type??'MARKET')==='LIMIT';
+    const waitMs=Number(input.waitMs??(isLimit?0:30000));
+    if(!Number.isSafeInteger(waitMs)||waitMs<0||(!isLimit&&waitMs===0))throw paramsError('wait-ms must be a nonnegative safe integer; zero is only valid for LIMIT');
+    const keepPending=isLimit&&waitMs===0;
+    const executionPolicy={waitMs,cancelOnTimeout:!keepPending,monitoringActive:false,pendingEntryPolicy:keepPending?'KEEP_GTC':'CANCEL_ON_TIMEOUT'};
     if(!input.dryRun&&input.requestId) {
       const prior=await this._lookupEntry(symbol,tx.entryClientOrderId);
       if(prior) {
@@ -796,7 +800,7 @@ const Client = {
     const entryParams={symbol,side:plan.side,positionSide:plan.wireSide,type:plan.type,quantity:plan.quantity,newClientOrderId:tx.entryClientOrderId,newOrderRespType:'RESULT',...(plan.type==='LIMIT'?{price:plan.price,timeInForce:'GTC'}:{})};
     if(input.dryRun) {
       const base={algoType:'CONDITIONAL',symbol,side:plan.direction==='LONG'?'SELL':'BUY',positionSide:plan.wireSide,workingType:'CONTRACT_PRICE',...protectionSizing(plan.wireSide,plan.type==='LIMIT'?plan.quantity:undefined)};
-      return {status:'PREVIEW',dryRun:true,requestId:tx.requestId,plan,requests:{entry:entryParams,stopLoss:{...base,type:'STOP_MARKET',triggerPrice:plan.stopLossPrice,clientAlgoId:tx.slClientOrderId},takeProfit:{...base,type:'TAKE_PROFIT_MARKET',triggerPrice:plan.takeProfitPrice,clientAlgoId:tx.tpClientOrderId}},readyForApproval:plan.readyForApproval};
+      return {status:'PREVIEW',dryRun:true,requestId:tx.requestId,plan,executionPolicy,requests:{entry:entryParams,stopLoss:{...base,type:'STOP_MARKET',triggerPrice:plan.stopLossPrice,clientAlgoId:tx.slClientOrderId},takeProfit:{...base,type:'TAKE_PROFIT_MARKET',triggerPrice:plan.takeProfitPrice,clientAlgoId:tx.tpClientOrderId}},readyForApproval:plan.readyForApproval};
     }
     if(plan.blockers.length)throw paramsError(plan.blockers.join('; '));
     let entry;
@@ -812,6 +816,9 @@ const Client = {
       // Use the completed preflight: no position/ticker/rules round trips between entry and stop submission.
       // LIMIT may still be unfilled: use quantity protection, not position-dependent close-all (GTE).
       const protection=await this._submitTPSL({sym:symbol,direction:plan.direction,mode:{wireSide:plan.wireSide},quantity:plan.type==='LIMIT'?plan.quantity:undefined,stopLossPrice:plan.stopLossPrice,takeProfitPrice:plan.takeProfitPrice,cancelExisting:false,clientAlgoIdPrefix:tx.correlationId,old:[],externalIds:[]});
+      // A GTC entry can wait for a trading setup for hours. Confirm its current state,
+      // then return a protected pending snapshot without imposing a strategy deadline.
+      if(keepPending)entry=await this.getOrder(symbol,{orderId:entry.orderId});
       const maxChecks=Math.ceil(waitMs/200)+5;
       for(let checks=0;checks<maxChecks;checks++) {
         positiveOrZero(entry.executedQty);
@@ -821,6 +828,7 @@ const Client = {
         if(D.compare(entry.executedQty,checkedQuantity)>0) {
           const snapshot=await this.getPositionRisk(symbol),mode={hedge:plan.hedge};const pos=this._matchPosition(snapshot,plan.direction,mode);
           if(!pos)throw new BinanceError('Filled entry without a confirmed position',{type:'AMBIGUOUS_STATE'});
+          if(keepPending&&D.compare(absQty(pos.positionAmt),entry.executedQty)!==0)throw new BinanceError('Current exposure differs from this entry fill; reconcile attribution',{type:'AMBIGUOUS_STATE'});
           checkedQuantity=entry.executedQty;
           const fillPrice=Number(entry.avgPrice)>0?positive(entry.avgPrice):positive(pos.entryPrice);
           _validatePriceBounds(plan.direction,fillPrice,plan.stopLossPrice,plan.takeProfitPrice);
@@ -830,6 +838,10 @@ const Client = {
 
         }
         if(['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(entry.status))break;
+        if(keepPending) {
+          if(D.compare(entry.executedQty,'0')===0&&(await this.getPositionRisk(symbol)).length)throw new BinanceError('Unexpected exposure while entry reports no fill; reconcile attribution',{type:'AMBIGUOUS_STATE'});
+          return {status:'SUBMITTED',outcome:'ENTRY_PENDING',requestId:tx.requestId,correlationId:tx.correlationId,entryAccepted:true,entryTerminal:false,entrySucceeded:D.compare(entry.executedQty,'0')>0,tpslSucceeded:true,entry,tpsl:protection,filledQuantity:entry.executedQty,actualExecutionRisk,plan,executionPolicy,nextAction:'GTC entry and protection remain on the exchange. Reconcile this request when reviewing or cancelling the setup; no background monitor is running and protection does not cancel the entry remainder.'};
+        }
         if(now()-started>=waitMs||checks===maxChecks-2) {entry=await this._cancelAndVerifyEntry(symbol,entry);continue;}
         await sleep(200);entry=await this.getOrder(symbol,{orderId:entry.orderId});
       }
@@ -1111,8 +1123,8 @@ const COMMANDS = {
     run: args => {const hasQuantity=args[4]!==undefined&&!args[4].startsWith('--'),options=cliOptions(args.slice(hasQuantity?5:4));return Client.setTPSL({ symbol: args[0], positionSide: args[1], stopLossPrice: args[2]==='-'?undefined:args[2], takeProfitPrice: args[3]==='-'?undefined:args[3], quantity:hasQuantity?args[4]:undefined,clientAlgoIdPrefix:options.requestId?new TransactionContext(options.requestId).correlationId:undefined,replaceAlgoIds:options.replaceAlgoIds??[] });}
   },
   'open-tpsl': {
-    minArgs:7, usage:'<symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <sl> <tp> <--dry-run|--approved> [risk flags]',
-    desc:'Entry with verified protection and compensation',
+    minArgs:7, usage:'<symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <sl> <tp> <--dry-run|--approved> [--wait-ms <ms>] [risk flags]',
+    desc:'Verified protection; LIMIT defaults to persistent GTC, positive wait-ms opts into timeout cancellation',
     run:args=>{const [symbol,side,positionSide,quantity,rawType]=args;const type=String(rawType).toUpperCase();const n=type==='LIMIT'?8:7;if(!['LIMIT','MARKET'].includes(type)||args.length<n)throw paramsError('Invalid entry arguments');return Client.openPositionWithTPSL({symbol,side,positionSide,quantity,type,price:type==='LIMIT'?args[5]:undefined,stopLossPrice:args[n-2],takeProfitPrice:args[n-1],...cliOptions(args.slice(n))});}
   }
 
