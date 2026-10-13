@@ -229,7 +229,7 @@ LIMIT 默认 GTC，不设置客户端撤单期限（等同 --wait-ms 0）。入�
 
 更新保护先确认新腿有效再撤对应旧腿；撤销后确认已撤状态或可信查询证明不存在，不能只看请求正常返回。修订保护继续使用原交易 request ID 前缀，保持生命周期归属。只更新一腿保留另一腿，无新参数拒绝。只撤本流程保护，外部订单需用户明确指定 ID。一腿失败保留有效保护并报告待补偿状态。
 
-LIMIT 空仓预挂不能使用 closePosition=true：交易所可能返回 -4509（GTE 仅适用于已有持仓）。dry-run 展示入场与双腿保护的实际参数，但不证明交易所接受了保护单。
+LIMIT 空仓预挂不能使用 closePosition=true：全平保护只对已有持仓有效，空仓时交易所会拒绝。dry-run 展示入场与双腿保护的实际参数，但不证明交易所接受了保护单。
 
 单独 set-tpsl 自动继承唯一的现有保护前缀；多个前缀必须通过 --request-id 明确维护范围。只替换指定前缀或 --replace-algo-id 明确授权的外部订单。核验 algoId、clientAlgoId、workingType、方向、closePosition 和有效状态；已有触发订单 ID 的腿不算有效。失败时 protectionResult 返回已确认腿、尝试的 clientAlgoId、确认已撤 ID、保留 ID 及撤销状态未知的 ID，不把不确定撤单说成旧保护仍完整。
 
