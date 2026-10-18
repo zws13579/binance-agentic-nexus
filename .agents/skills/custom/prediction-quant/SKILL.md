@@ -42,11 +42,21 @@ node .agents/skills/custom/prediction-quant/scripts/engine.mjs --quote --tokenId
 # 仅在用户明确批准具体交易后执行
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --approved
 
+# LIMIT 询价与执行：必须使用同一订单类型和限价，并沿用报价返回的滑点
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --quote --tokenId <id> --marketTopicId <id> --amount 1 --orderType LIMIT --priceLimit 0.6
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --orderType LIMIT --priceLimit 0.6 --slippageBps <报价返回值> --approved
+
 # 结算后按用户授权赎回
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --redeem --tokenIds <id1,id2>
 ```
 
 `--stdin`、`--json`、`--file` 三选一。Jev 请求默认超时 15000ms，可用 `--timeout-ms` 调整。评估/评分只输出 JSON，不自动保存台账。临时文件放 `tmp/`，用后清理。数学与审批闸门本地检查：`node .agents/skills/custom/prediction-quant/scripts/engine.mjs test`。
+
+quote/execute 默认 `orderType=MARKET` 兼容旧调用；显式只接受 `MARKET` 或 `LIMIT`。LIMIT 必填 `priceLimit`，本封装要求有限 USDT 价格严格在 `(0,1)` 内；这是本封装的约束，不宣称是 BAW 官方完整价格范围。MARKET 禁止携带限价。交易 CLI 拒绝未知、重复、不适用和缺值参数，不静默降级。
+
+LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即撮合。审批必须覆盖选项、金额、订单类型、限价、报价有效期与滑点；quote 和 execute 参数必须一致，执行使用报价返回的 `slippageBps`（旧默认 1000 仅保留兼容性）。本封装只校验本次输入；仅持有不透明 quoteId 时，无法在本地验证报价内容与执行参数绑定，不能声称已完成该验证，须人工核对原始报价与授权。提交成功也不代表成交。
+
+离线参数/CLI 回归：`node --test .agents/skills/custom/prediction-quant/scripts/engine.test.mjs`。测试注入假执行器，CLI 使用隔离本地 stub，临时文件在 `tmp/` 并自动清理；不连接钱包或交易网络。
 
 ## 工作步骤
 

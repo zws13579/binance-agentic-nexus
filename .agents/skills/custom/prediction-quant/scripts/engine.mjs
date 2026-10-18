@@ -1200,6 +1200,48 @@ export async function evaluateMarketOutcomes(states, options = {}) {
   };
 }
 
+/** Shared quote/place-order policy. Price bounds are this wrapper's constraint. */
+export function predictionOrderArgs({ orderType = 'MARKET', priceLimit } = {}) {
+  if (orderType !== 'MARKET' && orderType !== 'LIMIT') {
+    throw new Error('orderType 必须为 MARKET 或 LIMIT');
+  }
+  if (orderType === 'MARKET') {
+    if (priceLimit !== undefined) throw new Error('MARKET 不允许 priceLimit');
+    return ['--orderType', orderType];
+  }
+  if ((typeof priceLimit !== 'number' && typeof priceLimit !== 'string') ||
+      (typeof priceLimit === 'string' && !/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(priceLimit)) ||
+      !Number.isFinite(Number(priceLimit)) || Number(priceLimit) <= 0 || Number(priceLimit) >= 1) {
+    throw new Error('LIMIT 必须提供 priceLimit，本封装要求 USDT 价格在 (0, 1) 内');
+  }
+  return ['--orderType', orderType, '--priceLimit', String(Number(priceLimit))];
+}
+
+/** Reject typos, missing values, duplicates and mixed commands before any BAW call. */
+export function parsePredictionTradeArgs(argv) {
+  const command = argv.includes('--quote') ? '--quote' : '--execute';
+  const allowed = new Set(command === '--quote'
+    ? ['--tokenId', '--marketTopicId', '--amount', '--orderType', '--priceLimit']
+    : ['--quoteId', '--slippageBps', '--orderType', '--priceLimit']);
+  const values = {};
+  const seen = new Set();
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i];
+    if (seen.has(flag)) throw new Error(`重复参数: ${flag}`);
+    seen.add(flag);
+    if (flag === command) continue;
+    if (command === '--execute' && flag === '--approved') { values.approved = true; continue; }
+    if (!allowed.has(flag)) throw new Error(`未知或不适用参数: ${flag}`);
+    const value = argv[++i];
+    if (value === undefined || value.startsWith('--') || value.trim() === '') {
+      throw new Error(`参数 ${flag} 缺少值`);
+    }
+    values[flag.slice(2)] = value;
+  }
+  predictionOrderArgs(values);
+  return values;
+}
+
 /**
  * 盘口报价 (Quote)
  */
@@ -1208,22 +1250,25 @@ export async function quotePrediction({
   marketTopicId,
   amount = 1.0,
   side = 'BUY',
-  binanceChainId = 56
-}) {
+  binanceChainId = 56,
+  orderType = 'MARKET',
+  priceLimit
+}, { orderExecutor = runBaw } = {}) {
+  const orderArgs = predictionOrderArgs({ orderType, priceLimit });
   const safeTokenId = validateSafeId(tokenId, 'tokenId');
   const safeTopicId = validateSafeId(marketTopicId, 'marketTopicId');
   const safeAmount = validatePositiveNumber(amount, 'amount', 100000);
   const safeSide = String(side).toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
   const safeChainId = validateInteger(binanceChainId, 'binanceChainId', 1, 1e8);
 
-  return runBaw([
+  return orderExecutor([
     'prediction', 'trade', 'quote',
     '--binanceChainId', String(safeChainId),
     '--tokenId', safeTokenId,
     '--marketTopicId', safeTopicId,
     '--side', safeSide,
     '--amount', String(safeAmount),
-    '--orderType', 'MARKET',
+    ...orderArgs,
     '--json'
   ]);
 }
@@ -1234,7 +1279,9 @@ export async function quotePrediction({
 export async function executePrediction({
   quoteId,
   slippageBps = 1000,
-  approved = false
+  approved = false,
+  orderType = 'MARKET',
+  priceLimit
 }, { orderExecutor = runBaw } = {}) {
   if (approved !== true) {
     return {
@@ -1244,6 +1291,7 @@ export async function executePrediction({
     };
   }
 
+  const orderArgs = predictionOrderArgs({ orderType, priceLimit });
   const safeQuoteId = validateSafeId(quoteId, 'quoteId');
   const safeSlippage = validateInteger(slippageBps, 'slippageBps', 0, 5000);
 
@@ -1251,6 +1299,7 @@ export async function executePrediction({
     'prediction', 'trade', 'place-order',
     '--quoteId', safeQuoteId,
     '--slippageBps', String(safeSlippage),
+    ...orderArgs,
     '--json'
   ]);
 }
@@ -1303,12 +1352,17 @@ async function main() {
   --score-file <path>     只读评分用户提供的 JSONL 历史 (workflow/market/human 概率与赛果)
   --quote                 向盘口请求精确深度报价 (--tokenId <id> --marketTopicId <id> [--amount <num> 未声明默认 1.0])
   --execute               执行链上下单 (--quoteId <id> --approved) [安全闸门强制拦截未审批操作]
+  --orderType <type>      quote/execute: MARKET (默认) 或 LIMIT；两步必须一致
+  --priceLimit <price>    LIMIT 必填，USDT 价格 (0,1)；MARKET 禁用；LIMIT 不保证 Maker
+  --slippageBps <bps>     execute: 使用报价返回值；默认 1000 仅为兼容旧调用
   --redeem                赎回已结算胜出头寸 (--tokenIds <id1,id2>)
   --auto-redeem           自动巡检并一键赎回所有已结算获胜头寸
   test                    本地纯数学与安全闸门检查，不调用网络或钱包
     `);
     process.exit(0);
   }
+
+  if (hasFlag('--quote') || hasFlag('--execute')) parsePredictionTradeArgs(args);
 
   if (hasFlag('--describe-input')) {
     console.log(JSON.stringify({
@@ -1440,32 +1494,28 @@ async function main() {
 
   // 4. 询价 Quote
   if (hasFlag('--quote')) {
-    const tokenId = getArg('--tokenId');
-    const marketTopicId = getArg('--marketTopicId');
-    const amount = parseFloat(getArg('--amount') || '1.0');
+    const { tokenId, marketTopicId, amount = 1.0, orderType, priceLimit } = parsePredictionTradeArgs(args);
 
     if (!tokenId || !marketTopicId) {
       console.error('错误: 缺少 --tokenId 或 --marketTopicId');
       process.exit(1);
     }
 
-    const q = await quotePrediction({ tokenId, marketTopicId, amount });
+    const q = await quotePrediction({ tokenId, marketTopicId, amount, orderType, priceLimit });
     console.log(JSON.stringify(q, null, 2));
     process.exit(q.success ? 0 : 1);
   }
 
   // 5. 执行下单 Execute
   if (hasFlag('--execute')) {
-    const quoteId = getArg('--quoteId');
-    const slippageBps = parseInt(getArg('--slippageBps') || '1000', 10);
-    const approved = hasFlag('--approved');
+    const { quoteId, slippageBps = 1000, approved = false, orderType, priceLimit } = parsePredictionTradeArgs(args);
 
     if (!quoteId) {
       console.error('错误: 缺少 --quoteId');
       process.exit(1);
     }
 
-    const execRes = await executePrediction({ quoteId, slippageBps, approved });
+    const execRes = await executePrediction({ quoteId, slippageBps, approved, orderType, priceLimit });
     console.log(JSON.stringify(execRes, null, 2));
     process.exit(execRes.success ? 0 : 1);
   }
