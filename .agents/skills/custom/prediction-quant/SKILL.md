@@ -54,16 +54,17 @@ node .agents/skills/custom/prediction-quant/scripts/engine.mjs --redeem --tokenI
 
 quote/execute 默认 `orderType=MARKET` 兼容旧调用；显式只接受 `MARKET` 或 `LIMIT`。LIMIT 必填 `priceLimit`，本封装要求有限 USDT 价格严格在 `(0,1)` 内；这是本封装的约束，不宣称是 BAW 官方完整价格范围。MARKET 禁止携带限价。交易 CLI 拒绝未知、重复、不适用和缺值参数，不静默降级。
 
-LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即撮合。由于 BAW 按 2 位小数截断股数（`floor(amount / price * 100) / 100`），`--amount 1` 在 LIMIT 下常导致实际扣款 `amountIn < 1.00 USDT` 并在下单时被拒；最小 1 USDT 仓位建议使用 `--amount 1.02`（或按 `Number(amountIn) >= 1.00` 校验），并用 `Number(amountIn) / Number(amountOut)` 核验实际限价（BAW 报价的 `averagePrice`/`lastPrice` 仅反映最新成交价）。审批必须覆盖选项、金额、订单类型、限价、报价有效期与滑点；quote 和 execute 参数必须一致，执行使用报价返回的 `slippageBps`（旧默认 1000 仅保留兼容性）。本封装只校验本次输入；仅持有不透明 quoteId 时，无法在本地验证报价内容与执行参数绑定，不能声称已完成该验证，须人工核对原始报价与授权。提交成功也不代表成交。
+LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即撮合。BAW 询价会把股数截断到 2 位小数，`--amount 1` 在 LIMIT 下实际扣款 `amountIn` 可能略低于 1.00 USDT（实测出现过 0.99x），而 Predict.fun 要求订单价值不低于 1.00 USDT，因此最小仓位建议用 `--amount 1.02` 并校验 `Number(amountIn) >= 1.00`。LIMIT 询价返回的 `averagePrice`/`lastPrice` 可能是最新成交价而非限价（同一限价单两次询价曾分别返回 0.28 与 0.29），实际限价以 `Number(amountIn) / Number(amountOut)` 核验。审批必须覆盖选项、金额、订单类型、限价、报价有效期与滑点；quote 和 execute 参数必须一致，执行使用报价返回的 `slippageBps`（旧默认 1000 仅保留兼容性）。本封装只校验本次输入；仅持有不透明 quoteId 时，无法在本地验证报价内容与执行参数绑定，不能声称已完成该验证，须人工核对原始报价与授权。提交成功也不代表成交。
 
 离线参数/CLI 回归：`node --test .agents/skills/custom/prediction-quant/scripts/engine.test.mjs`。测试注入假执行器，CLI 使用隔离本地 stub，临时文件在 `tmp/` 并自动清理；不连接钱包或交易网络。
 
 ## 工作步骤
 
-1. **本地零 Token 数学预筛与轻量级子 Agent 搜索**：
-   - **第 0 步（本地 API 批量预筛，0 子 Agent）**：严禁对未预筛的盘口盲目派发子 Agent。主 Agent 先用单个本地 Node.js 脚本批量读取 BAW 价格/订单簿（`Best Bid`/`Best Ask`）、持仓与资金限额，并直接请求公开赔率/盘口接口（如 Polymarket `gamma-api.polymarket.com` / `clob.polymarket.com/book`、Flashscore GraphQL `global.ds.lsapp.eu/odds/pq_graphql`、Bo3.gg `api.bo3.gg/api/v1/matches` 等），在本地同时计算 **Taker 吃单 EV（按 `Best Ask`）** 与 **Maker 限价挂单 EV（当 `Ask - Bid >= $0.03` 时测试买一跳价做市，且不高于跨所买一）**，直接淘汰所有净边缘 `< +300 bps` 的盘口。
-   - **按需调用轻量级子 Agent（跨客户端适配）**：仅对通过本地数学预筛（存在 `>= +300 bps` 潜力的 1~2 个候选标的）或需深挖阵容/伤停/赛程真实性的标的调用子 Agent；若当前客户端/harness 支持选择子 Agent 模型档位，优先选用当前生态下的**轻量快速模型档位**（如 `flash`、`haiku`、`luna` 或等效轻量档，不写死单一厂商模型名）以节约额度。主 Agent 提供最小任务快照并汇总复核，不把整段历史灌入子 Agent。无法取得的数据留为未知；BAW 未登录则如实提示认证，业务路径不使用 Demo/Mock。
-2. **汇总证据并做 Agent 分析**：主 Agent 校验子 Agent 返回的赛事、合约、选项映射、引用和采集时间，区分事实、推测、冲突与缺失。使用 `buildPredictionTradeState` 构建标准状态（传入 `bankroll: { targetActionAllowed, maxBetUsd, balance }` 及与 `--amount` 完全一致的 `executionCosts.stakeUsd`），中立比较所有 outcomes，为每侧填写 `agentAssessment`；选择 `enter`、`pass` 或 `reject`。算术交由引擎。
+1. **本地预筛与轻量级子 Agent 搜索**：
+   - **第 0 步（本地预筛，不派子 Agent）**：不要对未预筛的盘口盲目派发子 Agent。先复用 `--scan` 读取市场，再用 `tmp/` 下的一次性本地脚本（用后清理）读取 BAW 订单簿的 `Best Bid`/`Best Ask`，并请求公开盘口/赔率来源做粗筛。粗筛阈值与引擎同口径：按拟用价格计算毛 EV 百分比，低于引擎的 3% 入场门槛的盘口直接淘汰（概率差 300 bps 在不同价位对应不同 EV%，不能直接当阈值）。Taker 按 `Best Ask` 计算；当 `Ask - Bid >= $0.03` 时可额外评估买一跳价的 Maker 限价，同时说明 Maker 存在不成交与被知情单逆向选择的风险，EV 需按成交概率折扣，目前仅有单笔成交的经验，不能当作成交率。
+   - **锚点独立性**：Polymarket 等预测市场与 Predict.fun 大量镜像，只用于排除盘口或交叉核对，不能充当 `sharpBookmaker` 独立锚点；锚点须是带来源与采集时间的去水赔率。Flashscore GraphQL、Bo3.gg 内部接口等并非稳定公开 API，可能随时失效，失败时按未知处理，不回填。
+   - **按需调用轻量级子 Agent（跨客户端适配）**：仅对通过粗筛的少数候选或需深挖阵容/伤停/赛程真实性的标的调用子 Agent；若当前客户端/harness 支持选择子 Agent 模型档位，优先选用轻量快速档位（不写死单一厂商模型名）以节约额度。主 Agent 提供最小任务快照并汇总复核，不把整段历史灌入子 Agent。无法取得的数据留为未知；BAW 未登录则如实提示认证，业务路径不使用 Demo/Mock。
+2. **汇总证据并做 Agent 分析**：主 Agent 校验子 Agent 返回的赛事、合约、选项映射、引用和采集时间，区分事实、推测、冲突与缺失。按 `--describe-input` 输出的契约构造每侧 state（需 `market`、`marketPrice` 及 eventId/marketId/targetOutcome 等标识，风控字段放在 `allowed`，`executionCosts.stakeUsd` 与 `--amount` 实际扣款一致），中立比较所有 outcomes，为每侧填写 `agentAssessment`；选择 `enter`、`pass` 或 `reject`。算术交由引擎。
 3. **按情景自主调用 Jev**：普通组合为 Agent + Jev；有 Key 的事件概率与风险评估默认使用 auto 模式，无需用户再次指定。Agent 动态构建当前情景的 state、instructions 和 criteria；CEX/Web3 的 Choice、Noul、Score 判定按 typesafe-evaluator 的触发规则执行。Jev 只接收证据，不接收 Agent 的概率或执行权限。输出保留双方意见；暂不混合加权。最终采用所选 provider 的概率，有独立锚点时限幅。
 4. **呈报与授权**：展示概率来源、未校准状态、毛/净 EV、缺失数据和双方分歧。询价确认实际成本/报价有效期后，用户批准具体选项和金额，才执行 `--approved`。批准之后若报价或金额改变，重新核对授权范围。执行前检查同场已有和在途订单，避免互斥方向重复下注；成功提交不等于已成交，按 BAW 返回状态核对。
 
