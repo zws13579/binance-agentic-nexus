@@ -38,7 +38,7 @@ npm install -g @binance/agentic-wallet@latest
 - 预测市场默认 `--provider auto`：有 Key 使用 Jev；无 Key 使用 Agent 提供的 `state.agentAssessment`。支持 `--provider agent`、`--provider jev`，普通使用为 Agent + Jev。输入契约可用 `engine.mjs --describe-input` 获取。
 - 永续合约使用 `scripts/futures_evaluator.mjs --evaluate --stdin --provider auto`；契约通过 `--describe-input` 获取。中立扫描 schema 2 无旧 score，研究用 `--top 20`，默认 4h/1h/15m。多空六情景及资金/串行保护执行见 [CEX SOP](sop-cex-trading.md)。资金迁移使用 Universal Transfer 权限；缺模式不提交，dry-run 和 approved 互斥。
 - 配置 Key 后，Agent 按概率估计、交易风险、异常信号或证据冲突等情景自主调用 Jev，并动态构造问题；不要求用户逐次点名。无 Key 时主 Agent 和可用子 Agent 继续执行分析流程。
-- 自定义地址保留：`TYPESAFE_ENDPOINT` > `TYPESAFE_BASE_URL` + `/systemone` > 官方 `https://api.typesafe.ai/v1/systemone`；模型默认 `jev-latest`，支持 `TYPESAFE_MODEL`。地址/模型的进程变量覆盖同名文件值，Key 的开关只认项目文件。
+- 自定义地址保留：`TYPESAFE_ENDPOINT` > `TYPESAFE_BASE_URL` + `/systemone`（只填域名时补 `/v1`） > 官方 `https://api.typesafe.ai/v1/systemone`；模型默认 `jev-latest`，支持 `TYPESAFE_MODEL`。地址/模型的进程变量覆盖同名文件值，Key 的开关只认项目文件。
 - 直接调用真实 Jev API 时，缺 Key 或请求失败仍明确报错。auto 模式仅在已有合法 Agent 分析且 Jev 服务故障时公开切换至该分析；Mock/非法概率不走该回退。`--mock` 只用于离线测试。
 - 若拉取其官方说明，放于 `.agents/skills/typesafe-ai` 即可；业务自研决策器位于 `.agents/skills/custom/typesafe-evaluator`
 

@@ -123,7 +123,7 @@ sentiment 的 openInterest 是当前接口快照；openInterestChange 是最近�
 
 无法解决冲突时输出 WAIT 并说明条件，或 NO_TRADE 说明证据/优势/约束不足；两者必须显式提供 setupType:null。特征与情景不自动产生未经校准的胜率。
 
-项目 .env 有非空 TYPESAFE_API_KEY 时按情景自主调用 Jev，无需用户逐次点名；无 Key 时继续 Agent 与子 Agent 分析。保留 TYPESAFE_ENDPOINT > TYPESAFE_BASE_URL + /systemone > 官方地址，模型默认 jev-latest。
+项目 .env 有非空 TYPESAFE_API_KEY 时按情景自主调用 Jev，无需用户逐次点名；无 Key 时继续 Agent 与子 Agent 分析。保留 TYPESAFE_ENDPOINT > TYPESAFE_BASE_URL + /systemone（只填域名时补 /v1） > 官方地址，模型默认 jev-latest。
 
 ```bash
 node scripts/futures_evaluator.mjs --evaluate --stdin --provider auto

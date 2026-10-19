@@ -59,7 +59,15 @@ export function resolveTypeSafeConfig(env, runtimeEnv = {}) {
   if (!endpoint) {
     const baseUrl = clean(runtimeEnv.TYPESAFE_BASE_URL) || clean(env.TYPESAFE_BASE_URL);
     if (baseUrl) {
-      endpoint = baseUrl.replace(/\/+$/, '') + '/systemone';
+      const trimmed = baseUrl.replace(/\/+$/, '');
+      // 仅填域名（无路径）时补官方 /v1；带路径的网关/代理地址保持原行为，只追加 /systemone。
+      let hasPath = true;
+      try {
+        hasPath = new URL(trimmed).pathname.replace(/\/+$/, '') !== '';
+      } catch {
+        // 无法解析为 URL 时保持原行为，不猜测路径。
+      }
+      endpoint = hasPath ? `${trimmed}/systemone` : `${trimmed}/v1/systemone`;
     } else {
       endpoint = 'https://api.typesafe.ai/v1/systemone';
     }

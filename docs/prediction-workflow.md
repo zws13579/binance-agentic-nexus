@@ -17,7 +17,7 @@
 地址保留原有优先级：
 
 1. TYPESAFE_ENDPOINT 是完整请求 URL。
-2. 没有 endpoint 时，TYPESAFE_BASE_URL 去除末尾斜杠后追加 /systemone（base 如包含 /v1，会保留）。
+2. 没有 endpoint 时，TYPESAFE_BASE_URL 去除末尾斜杠后追加 /systemone；若 base 只有域名、没有路径，则补成 /v1/systemone（base 已含 /v1 或其他路径时原样保留）。
 3. 均未填写时使用 https://api.typesafe.ai/v1/systemone。
 
 地址与模型同名配置仍支持进程变量优先于 .env；Key 只认项目文件。模型默认 jev-latest，可通过 TYPESAFE_MODEL 或评估的 --model 修改。Jev 请求默认期限 15 秒，--timeout-ms 可设置 1 到 120000ms。

@@ -11,7 +11,7 @@ description: Binance Web3 预测市场工作流。主 Agent 编排、子 Agent �
 
 - 默认 `--provider auto`：项目根目录 `.env` 有非空 `TYPESAFE_API_KEY` 时使用 Jev；没有时直接消费当前 Agent 的 `state.agentAssessment`，不发送 Jev 请求。
 - `--provider agent`：显式仅用 Agent 分析；`--provider jev`：要求 Jev，但不能绕过未配置 Key 的禁用状态。
-- 地址优先级：`TYPESAFE_ENDPOINT` > `TYPESAFE_BASE_URL` 去除末尾斜杠后加 `/systemone` > 官方 `https://api.typesafe.ai/v1/systemone`。模型默认 `jev-latest`，保留 `TYPESAFE_MODEL`。
+- 地址优先级：`TYPESAFE_ENDPOINT` > `TYPESAFE_BASE_URL` 去除末尾斜杠后加 `/systemone`（只填域名时补 `/v1`） > 官方 `https://api.typesafe.ai/v1/systemone`。模型默认 `jev-latest`，保留 `TYPESAFE_MODEL`。
 - 仅配置地址、或 harness 注入进程级 API Key，都不会启用 Jev。不要打印真实凭证。
 - 无 Jev 时，扫描、Agent 评估、询价、人工批准后的交易和赎回均可继续。缺少 Agent 分析时，补充真实分析再评估，不制造替代概率。
 - 已配置 Key 时，事件概率、入场风险、相互矛盾的证据或候选动作比较等情景自动触发 Jev 分析，无需用户额外指定“调用 Jev”。预测市场常规评估使用默认 auto 模式；直接行情读取和确定性算术由代码完成。

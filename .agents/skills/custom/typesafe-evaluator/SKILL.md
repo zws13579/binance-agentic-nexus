@@ -25,7 +25,7 @@ description: >-
 
 项目根目录 `.env` 中未配置非空 `TYPESAFE_API_KEY` 时不使用 Jev；客户端继承的进程级 Key 不会启用它。业务评估器的默认 auto 模式使用当前 Agent 的 agentAssessment 继续。直接调用本 Skill 真实 API 功能仍如实报告缺 Key。
 
-保留地址配置：`TYPESAFE_ENDPOINT` 优先，其次 `TYPESAFE_BASE_URL` + `/systemone`，均未填写时为 `https://api.typesafe.ai/v1/systemone`。支持 `TYPESAFE_MODEL`，不绑定特定后端构建版本。地址/模型同名配置维持进程变量优先于文件值的兼容行为，Key 的启用开关始终在项目文件中。
+保留地址配置：`TYPESAFE_ENDPOINT` 优先，其次 `TYPESAFE_BASE_URL` + `/systemone`（只填域名时补 `/v1`），均未填写时为 `https://api.typesafe.ai/v1/systemone`。支持 `TYPESAFE_MODEL`，不绑定特定后端构建版本。地址/模型同名配置维持进程变量优先于文件值的兼容行为，Key 的启用开关始终在项目文件中。
 
 > [!IMPORTANT]
 > **核心原则：特征结构化、权重明确化、风控事前包络化！**
