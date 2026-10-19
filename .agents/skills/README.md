@@ -20,6 +20,7 @@
 │           ├── binance-agentic-wallet/        # Web3 链上智能钱包 (baw) 与 DEX
 │           ├── binance-leaderboard/           # 链上交易员排行榜与 6 维画像打分
 │           ├── binance-onchain-copy-trader/   # Web3 链上跟单交易器
+│           ├── binance-prediction-updown/     # BTC 周期性涨跌预测市场策略脚手架与回测
 │           ├── binance-sports-ai-analyzer/    # 体育赛事与预测市场 AI 分析
 │           ├── binance-tokenized-securities-info/ # Ondo 美股代币化资产行情与 RWA 数据
 │           ├── binance-trading-signal/        # Web3 策略与自定义信号管理
