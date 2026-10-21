@@ -53,11 +53,9 @@ if (proxyUrl) {
     }
   }
 
-  if (setGlobalDispatcher && ProxyAgent) {
-    try {
-      setGlobalDispatcher(new ProxyAgent(proxyUrl));
-    } catch (e) {
-      console.error('Failed to set ProxyAgent:', e);
-    }
+  if (!setGlobalDispatcher || !ProxyAgent) {
+    throw new Error('ProxyAgent unavailable');
   }
+
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
 }
