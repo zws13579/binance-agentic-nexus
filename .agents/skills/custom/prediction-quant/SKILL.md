@@ -54,7 +54,7 @@ node .agents/skills/custom/prediction-quant/scripts/engine.mjs --redeem --tokenI
 
 quote/execute 默认 `orderType=MARKET` 兼容旧调用；显式只接受 `MARKET` 或 `LIMIT`。LIMIT 必填 `priceLimit`，本封装要求有限 USDT 价格严格在 `(0,1)` 内；这是本封装的约束，不宣称是 BAW 官方完整价格范围。MARKET 禁止携带限价。交易 CLI 拒绝未知、重复、不适用和缺值参数，不静默降级。
 
-LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即撮合。BAW 询价会把股数截断到 2 位小数，`--amount 1` 在 LIMIT 下实际扣款 `amountIn` 可能略低于 1.00 USDT（实测出现过 0.99x），而 Predict.fun 要求订单价值不低于 1.00 USDT，因此最小仓位建议用 `--amount 1.02` 并校验 `Number(amountIn) >= 1.00`。LIMIT 询价返回的 `averagePrice`/`lastPrice` 可能是最新成交价而非限价（同一限价单两次询价曾分别返回 0.28 与 0.29），实际限价以 `Number(amountIn) / Number(amountOut)` 核验。审批必须覆盖选项、金额、订单类型、限价、报价有效期与滑点；quote 和 execute 参数必须一致，执行使用报价返回的 `slippageBps`（旧默认 1000 仅保留兼容性）。本封装只校验本次输入；仅持有不透明 quoteId 时，无法在本地验证报价内容与执行参数绑定，不能声称已完成该验证，须人工核对原始报价与授权。提交成功也不代表成交。
+LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即撮合。BAW 询价会把股数截断到 2 位小数，`--amount 1` 在 LIMIT 下实际扣款 `amountIn` 可能略低于 1.00 USDT（实测出现过 0.99x），而 Predict.fun 要求订单价值不低于 1.00 USDT，因此最小仓位建议用 `--amount 1.02` 并校验 `Number(amountIn) >= 1.00`。LIMIT 询价返回的 `averagePrice`/`lastPrice` 可能是最新成交价而非限价（同一限价单两次询价曾分别返回 0.28 与 0.29），实际限价以 `Number(amountIn) / Number(amountOut)` 核验。审批必须覆盖选项、金额、订单类型、限价、报价有效期与滑点；quote 和 execute 参数必须一致，执行使用报价返回的 `slippageBps`（旧默认 1000 仅保留兼容性）。调用方必须确认 `amountIn` 属于该 `quoteId` 对应的同一份报价；引擎不会根据不透明 `quoteId` 重新读取报价或建立参数绑定。仅持有 `quoteId` 时也无法在本地验证报价内容，须人工核对原始报价与授权。提交成功也不代表成交。
 
 离线参数/CLI 回归：`node --test .agents/skills/custom/prediction-quant/scripts/engine.test.mjs`。测试注入假执行器，CLI 使用隔离本地 stub，临时文件在 `tmp/` 并自动清理；不连接钱包或交易网络。
 
@@ -102,7 +102,7 @@ LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即
 - 缺流动性、账户余额、限额或执行方向许可时保持未知。低于 1000 USDT 的流动性不通过检查。
 - 净 EV 需要同一注额的成本对象 `executionCosts: {totalUsd, stakeUsd, source, observedAt}`；否则只报毛 EV，netEV 为 null。没有默认 2% 费用，也不能推断成本为零。
 - 同场不得同时下注互斥方向属于执行约束，不能作为胜率先验。
-- 30% 在途上限在评估与执行两阶段均由引擎硬性强制：评估阶段 `bankroll` 必须提供实时读取的 `balance` 与 `openExposureUsd`，超限输出 `exposure_cap_exceeded` 且 `readyForHumanApproval=false`；执行阶段 `executePrediction` / `--execute` 强制校验报价实际扣款 `--amountIn` 与最新持仓/余额，超限或缺失时以 `blockedByRiskGate=true` 物理阻断，绝不调用下单执行器。总资产低于 `1 / 0.30` USDT 时直接 NO_TRADE 并告知用户，不扫描、不推荐。
+- 30% 在途上限在评估与执行两阶段均由引擎硬性强制：评估阶段 `bankroll` 必须提供实时读取的 `balance` 与 `openExposureUsd`，超限输出 `exposure_cap_exceeded` 且 `readyForHumanApproval=false`；执行阶段 `executePrediction` / `--execute` 在审批、参数、评估拒绝和实际扣款缺失等早期闸门通过后，每次都重新读取最新持仓与余额，再用 `amountIn` 校验。执行时 `bankroll` / assessment 中的余额和敞口快照不会替代实时读取；读取失败、字段缺失或持仓列表不完整时以 `blockedByRiskGate=true` 物理阻断，绝不调用下单执行器。`targetActionAllowed` 与 `maxBetUsd` 仍可来自现有 bankroll/assessment 策略输入。总资产低于 `1 / 0.30` USDT 时直接 NO_TRADE 并告知用户，不扫描、不推荐。调用方负责确认 `amountIn` 与 `quoteId` 对应同一份报价；引擎不提供两者的绑定验证。
 - 每张决策卡必须附**实盘战绩行**：从 `baw prediction position settled-history` 统计已结算笔数、实际赢场、Σ买入价（市场隐含赢场）与累计净盈亏。实际赢场 ≤ 市场隐含赢场时，EV 一律标注“未经实盘验证”，并建议暂停或降低注额。
 - 审批要求适用于 Agent-only 和 Agent + Jev 两种模式。
 

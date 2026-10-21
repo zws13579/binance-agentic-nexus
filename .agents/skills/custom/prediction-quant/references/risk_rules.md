@@ -7,7 +7,7 @@
 ## 1. 资金纪律与单注规模 (Bankroll Allocation)
 
 * **下注金额由人工决定**：单笔下注量完全由人类用户在指令中明确指定（例如“买入 5 USDT”或“开仓 10 USDT”）。若用户在审批确认中未明确声明具体金额，系统默认严格按 **1.00 USDT / 笔** 的安全底线注额执行，禁止 Agent 在未获授权时自主追加仓位。
-* **在途仓位上限（评估与执行双阶段硬约束，引擎强制）**：`(现有在途本金 + 本笔实际扣款) ≤ 30% × (钱包可用余额 + 现有在途本金)`。余额与在途本金必须来自本次 `baw prediction position list` 实时读取，禁止填入估计值或占位值；评估阶段通过 `bankroll.balance` 与 `bankroll.openExposureUsd` 校验，执行阶段 `executePrediction` / `--execute` 再次读取最新余额、在途持仓及报价实际扣款 `amountIn` 复核，任一缺失或超限时以 `blockedByRiskGate: true` 物理拦截，普通 `--approved` 无法绕过。
+* **在途仓位上限（评估与执行双阶段硬约束，引擎强制）**：`(现有在途本金 + 本笔实际扣款) ≤ 30% × (钱包可用余额 + 现有在途本金)`。余额与在途本金必须来自本次 `baw prediction position list` 实时读取，禁止填入估计值或占位值；评估阶段通过 `bankroll.balance` 与 `bankroll.openExposureUsd` 校验。执行阶段 `executePrediction` / `--execute` 在审批、参数、assessment 拒绝和缺少实际扣款等早期闸门通过后，每次强制重读最新余额与在途持仓，再用报价实际扣款 `amountIn` 复核，不论调用方是否提供了 bankroll/assessment 快照或单独注入下单执行器。执行时只有实时读取提供余额与敞口；读取失败、字段缺失、持仓不完整或超限均以 `blockedByRiskGate: true` 物理拦截，快照不得回退使用，普通 `--approved` 无法绕过。`targetActionAllowed` 与 `maxBetUsd` 仍按原 bankroll/assessment 策略来源读取。调用方必须确认所传 `amountIn` 属于同一份 `quoteId` 报价；引擎不重取报价，也不在二者之间建立绑定验证。
 * **资金不足即停止**：若总资产 < `最低下单额 / 0.30`（按 1 USDT 最低额约为 3.34 USDT），输出 NO_TRADE，向用户说明“资金不足以在风控内下单”，不得继续扫描、推荐或询价。
   * *实战警示*：2026-10-19 CBA 一笔以 1.02 USDT 占总资产 1.455 USDT 的 70%，规则仅写在文档未被执行，该笔亏损后余额跌破最低下单额。
 * **流动性门槛**：绝不下注池子总流动性低于 **1,000 USDT** 的死寂盘口，防止遭遇极端滑点或无法撮合。

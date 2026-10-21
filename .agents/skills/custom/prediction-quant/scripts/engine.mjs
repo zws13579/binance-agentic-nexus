@@ -1487,7 +1487,7 @@ export async function executePrediction({
     }
   }
 
-  const rawAmountIn = amountIn ?? quote?.data?.amountIn ?? quote?.amountIn ?? assessment?.decision?.grossEV?.stake;
+  const rawAmountIn = amountIn ?? quote?.data?.amountIn ?? quote?.amountIn;
   if (rawAmountIn === undefined || rawAmountIn === null || rawAmountIn === '') {
     return {
       success: false,
@@ -1508,6 +1508,8 @@ export async function executePrediction({
 
   let targetActionAllowed = true;
   let maxBetUsd = null;
+  // Execution balance and open exposure are always refreshed below. Snapshots
+  // carried by bankroll/assessment remain policy inputs only.
   let accountBalanceUsd = null;
   let openExposureUsd = null;
   let liveFailureReason = null;
@@ -1523,29 +1525,17 @@ export async function executePrediction({
       targetActionAllowed = bankrollSource.targetActionAllowed;
     }
     maxBetUsd = nonNegativeFiniteOrNull(bankrollSource.maxBetUsd, 'bankroll.maxBetUsd');
-    accountBalanceUsd = nonNegativeFiniteOrNull(
-      bankrollSource.balance !== undefined ? bankrollSource.balance : bankrollSource.accountBalanceUsd,
-      'bankroll.balance'
-    );
-    openExposureUsd = nonNegativeFiniteOrNull(bankrollSource.openExposureUsd, 'bankroll.openExposureUsd');
   }
 
-  const liveReader = positionLister || positionExecutor || (
-    accountBalanceUsd === null && openExposureUsd === null && orderExecutor === runBaw
-      ? runBaw
-      : null
-  );
-
-  if (liveReader !== null) {
-    const live = await readLiveExposure(liveReader);
-    if (!live.ok) {
-      liveFailureReason = live.reason;
-      accountBalanceUsd = null;
-      openExposureUsd = null;
-    } else {
-      accountBalanceUsd = live.accountBalanceUsd;
-      openExposureUsd = live.openExposureUsd;
-    }
+  const liveReader = positionLister ?? positionExecutor ?? runBaw;
+  const live = await readLiveExposure(liveReader);
+  if (!live.ok) {
+    liveFailureReason = live.reason;
+    accountBalanceUsd = null;
+    openExposureUsd = null;
+  } else {
+    accountBalanceUsd = live.accountBalanceUsd;
+    openExposureUsd = live.openExposureUsd;
   }
 
   const envelope = evaluateExposureEnvelope({
@@ -1728,7 +1718,11 @@ async function main() {
         orderExecutor: () => {
           executorCalled = true;
           return { success: true };
-        }
+        },
+        positionLister: () => ({
+          success: true,
+          data: { summary: { walletBalance: 1.455 }, counts: { ongoingCount: 0 }, positions: [] }
+        })
       }
     );
     if (!riskGateTest.blockedByRiskGate || executorCalled) {
