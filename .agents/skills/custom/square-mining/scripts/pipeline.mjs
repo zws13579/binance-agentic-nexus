@@ -7,26 +7,10 @@
  * 1. 扩充传统顶级金融媒体源 (CNBC Finance, Yahoo Finance, MarketWatch) + 加密权威媒体 (The Block, CoinTelegraph)
  * 2. 调整选题加权：以即时权威新闻为核心议题，币安广场 Trends 作为借势流量标签
  * 3. 彻底重构生成引擎：引入 4 套多模态自适应主题模型，消除固定模板，彻底杜绝内容指纹同质化限流
+ *
+ * Network: 使用 Node.js 原生 fetch()。TUN 模式下直接原生运行；
+ * 端口代理模式下按需挂载引导脚本：node --import ./scripts/proxy_bootstrap.mjs .agents/skills/custom/square-mining/scripts/pipeline.mjs ...
  */
-
-// 代理环境引导：优先复用根目录统一代理引导脚本
-try {
-  const { pathToFileURL } = await import('url');
-  const { dirname, resolve } = await import('path');
-  const bootstrapPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../scripts/proxy_bootstrap.mjs');
-  await import(pathToFileURL(bootstrapPath).href);
-} catch {
-  // 备用兜底环境
-  let setGlobalDispatcher, ProxyAgent;
-  try {
-    ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
-  } catch {}
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  if (proxyUrl && setGlobalDispatcher && ProxyAgent) {
-    try { setGlobalDispatcher(new ProxyAgent(proxyUrl)); } catch {}
-  }
-}
 
 import fs from 'fs';
 import path from 'path';

@@ -30,34 +30,34 @@ for (const envFile of envCandidates) {
   }
 }
 
-let setGlobalDispatcher, ProxyAgent;
-try {
-  ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
-} catch {
-  // Dynamically resolve undici from Node.js install / user directories (portable across machines & Linux/WSL)
-  const candidates = [
-    join(dirname(process.execPath), 'node_modules', 'undici', 'index.js'),
-    join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'node_modules', 'undici', 'index.js'),
-    join(dirname(process.execPath), '..', 'lib', 'node_modules', '@binance', 'agentic-wallet', 'node_modules', 'undici', 'index.js'),
-    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'nodejs', 'node_modules', 'undici', 'index.js') : '',
-    process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'node_modules', 'undici', 'index.js') : ''
-  ].filter(Boolean);
-  for (const c of candidates) {
-    try {
-      ({ setGlobalDispatcher, ProxyAgent } = await import(pathToFileURL(c).href));
-      if (setGlobalDispatcher && ProxyAgent) break;
-    } catch {}
-  }
-}
-
-
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 
-if (proxyUrl && setGlobalDispatcher && ProxyAgent) {
+if (proxyUrl) {
+  let setGlobalDispatcher, ProxyAgent;
   try {
-    setGlobalDispatcher(new ProxyAgent(proxyUrl));
-  } catch (e) {
-    console.error('Failed to set ProxyAgent:', e);
+    ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
+  } catch {
+    // Dynamically resolve undici from Node.js install / user directories (portable across machines & Linux/WSL)
+    const candidates = [
+      join(dirname(process.execPath), 'node_modules', 'undici', 'index.js'),
+      join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'node_modules', 'undici', 'index.js'),
+      join(dirname(process.execPath), '..', 'lib', 'node_modules', '@binance', 'agentic-wallet', 'node_modules', 'undici', 'index.js'),
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'nodejs', 'node_modules', 'undici', 'index.js') : '',
+      process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'node_modules', 'undici', 'index.js') : ''
+    ].filter(Boolean);
+    for (const c of candidates) {
+      try {
+        ({ setGlobalDispatcher, ProxyAgent } = await import(pathToFileURL(c).href));
+        if (setGlobalDispatcher && ProxyAgent) break;
+      } catch {}
+    }
+  }
+
+  if (setGlobalDispatcher && ProxyAgent) {
+    try {
+      setGlobalDispatcher(new ProxyAgent(proxyUrl));
+    } catch (e) {
+      console.error('Failed to set ProxyAgent:', e);
+    }
   }
 }

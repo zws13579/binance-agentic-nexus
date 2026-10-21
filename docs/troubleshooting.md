@@ -85,8 +85,8 @@
 
 | 现象 / 报错 | 诊断原因 | 解决方案 |
 |:---|:---|:---|
-| `fetch failed` / `ECONNRESET` | 本地代理未开启或 TUN 未接管流量 | 1. 确认代理客户端处于运行状态；<br/>2. 确认 `.env` 中 `HTTP_PROXY` / `HTTPS_PROXY` 配置正确；<br/>3. `binance_unified.js` 会自动将 `.env` 代理注入 `process.env` 供原生 fetch 使用。 |
-| `NODE_TLS_REJECT_UNAUTHORIZED` | 端口代理自签名证书被拦截 | 在仅使用端口代理（非 TUN）时，挂载 `node --import ./scripts/proxy_bootstrap.mjs <script>`。 |
+| `fetch failed` / `ECONNRESET` | 本地代理未开启或 TUN 未接管流量 | 1. 确认代理客户端处于运行状态；<br/>2. 若使用端口代理（非 TUN），确认 `.env` 中 `HTTP_PROXY` / `HTTPS_PROXY` 配置正确，并通过 `node --import ./scripts/proxy_bootstrap.mjs <script>` 注入 `ProxyAgent`。 |
+| `UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `SELF_SIGNED_CERT_IN_CHAIN` | 端口代理或网关存在自签名根证书拦截 | 保持默认 TLS 校验开启，通过 `NODE_EXTRA_CA_CERTS=<根证书路径>` 显式信任代理 CA，避免全局关闭 `NODE_TLS_REJECT_UNAUTHORIZED`。 |
 | `Unable to load credentials` / `Missing BINANCE_API_KEY or BINANCE_SECRET_KEY` | 凭据未加载，或 `.env` 未放置在工作目录 | 脚本从项目根目录运行时自动加载 `.env`；确认文件存在且包含变量名（不打印值）。运行 `node scripts/binance_unified.js status` 会最先暴露这个问题。 |
 | 请求很慢或被中途掐断 | 单次请求超过 10 秒超时 | `httpRequest` 对所有请求使用 `AbortSignal.timeout(10000)`，并接受可选的截止时间参数。只读请求会自动重试，写请求超时后必须对账，不能直接重发。 |
 | `Read confirmation deadline exceeded` / `Protective leg unconfirmed after bounded read-back` | 保护单提交后的读回确认窗口已用尽 | 保护单每腿提交后有 3 秒、最多 3 轮只读确认：先按 `algoId` 查，再按 `clientAlgoId` 查，最后查同币活动保护单列表；该窗口包含查询超时，`-2013`、`-2011`、网络错误和可重试的 5xx 都只算暂时查不到。超时后按“提交结果未知”处理，保留原 `clientAlgoId` 去 `reconcile`，不要重发保护单。 |
