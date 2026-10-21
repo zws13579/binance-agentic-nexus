@@ -20,6 +20,8 @@ import { evaluateSystemOne, getConfig } from '../../typesafe-evaluator/scripts/t
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MIN_LIQUIDITY_USD = 1000;
+// 在途本金（含本笔）占总资产（可用余额 + 在途本金）的硬上限；见 references/risk_rules.md §1。
+export const MAX_OPEN_EXPOSURE_RATIO = 0.30;
 
 // =============================================================
 // 1. 欧赔去水与特征工程数学算子 (纯粹确定性数学，无业务幻觉)
@@ -232,10 +234,13 @@ export function buildPredictionTradeState({
   // A requested stake or unit bet is not a verified account limit.
   const maxBetUsd = nonNegativeFiniteOrNull(bankrollInput.maxBetUsd, 'bankroll.maxBetUsd');
   const accountBalanceUsd = nonNegativeFiniteOrNull(bankrollInput.balance, 'bankroll.balance');
+  // 未结算头寸的累计本金，须来自本次实时持仓读取；缺失时风控包络为 unknown，不按 0 处理。
+  const openExposureUsd = nonNegativeFiniteOrNull(bankrollInput.openExposureUsd, 'bankroll.openExposureUsd');
   const allowed = {
     targetActionAllowed: typeof bankrollInput.targetActionAllowed === 'boolean' ? bankrollInput.targetActionAllowed : null,
     maxBetUsd,
-    accountBalanceUsd
+    accountBalanceUsd,
+    openExposureUsd
   };
 
   const state = {
@@ -257,7 +262,8 @@ export function buildPredictionTradeState({
     allowed,
     riskEnvelopeStatus: bankrollInput.targetActionAllowed === false
       ? 'blocked'
-      : bankrollInput.targetActionAllowed === true && maxBetUsd !== null && accountBalanceUsd !== null
+      : bankrollInput.targetActionAllowed === true && maxBetUsd !== null && accountBalanceUsd !== null &&
+          openExposureUsd !== null
         ? 'provided'
         : 'unknown',
     executionCosts,
@@ -469,6 +475,155 @@ function validateAgentAssessment(state, assessment) {
 }
 
 /** Both providers share the same math, provenance and execution checks. */
+export function evaluateExposureEnvelope({
+  targetActionAllowed = null,
+  maxBetUsd = null,
+  accountBalanceUsd = null,
+  openExposureUsd = null,
+  stakeUsd = null,
+  requireMaxBet = true
+} = {}) {
+  const parsedMaxBetUsd = parseOptionalFinite(maxBetUsd);
+  const safeMaxBetUsd = parsedMaxBetUsd !== null && parsedMaxBetUsd >= 0 ? parsedMaxBetUsd : null;
+  const parsedAccountBalanceUsd = parseOptionalFinite(accountBalanceUsd);
+  const safeAccountBalanceUsd = parsedAccountBalanceUsd !== null && parsedAccountBalanceUsd >= 0
+    ? parsedAccountBalanceUsd
+    : null;
+  const parsedOpenExposureUsd = parseOptionalFinite(openExposureUsd);
+  const safeOpenExposureUsd = parsedOpenExposureUsd !== null && parsedOpenExposureUsd >= 0
+    ? parsedOpenExposureUsd
+    : null;
+  const parsedStakeUsd = parseOptionalFinite(stakeUsd);
+  const safeStakeUsd = parsedStakeUsd !== null && parsedStakeUsd > 0 ? parsedStakeUsd : null;
+
+  const riskLimitReasons = [];
+  let exposure = null;
+  const riskInputsKnown = targetActionAllowed === true &&
+    (!requireMaxBet || safeMaxBetUsd !== null) &&
+    safeAccountBalanceUsd !== null &&
+    safeOpenExposureUsd !== null &&
+    safeStakeUsd !== null;
+
+  if (riskInputsKnown) {
+    if (safeMaxBetUsd !== null && safeStakeUsd > safeMaxBetUsd) riskLimitReasons.push('stake_exceeds_max_bet');
+    if (safeStakeUsd > safeAccountBalanceUsd) riskLimitReasons.push('stake_exceeds_balance');
+    // 总资产 = 可用余额 + 在途本金；下单后在途本金不得超过总资产的固定比例。
+    const totalBankrollUsd = safeAccountBalanceUsd + safeOpenExposureUsd;
+    const exposureAfterUsd = safeOpenExposureUsd + safeStakeUsd;
+    const capUsd = MAX_OPEN_EXPOSURE_RATIO * totalBankrollUsd;
+    exposure = {
+      openExposureUsd: parseFloat(safeOpenExposureUsd.toFixed(4)),
+      totalBankrollUsd: parseFloat(totalBankrollUsd.toFixed(4)),
+      exposureAfterUsd: parseFloat(exposureAfterUsd.toFixed(4)),
+      capUsd: parseFloat(capUsd.toFixed(4)),
+      maxRatio: MAX_OPEN_EXPOSURE_RATIO,
+      ratioAfter: totalBankrollUsd > 0 ? parseFloat((exposureAfterUsd / totalBankrollUsd).toFixed(4)) : null
+    };
+    if (totalBankrollUsd <= 0 || exposureAfterUsd > capUsd + 1e-9) {
+      riskLimitReasons.push('exposure_cap_exceeded');
+    }
+  }
+
+  const riskEnvelopeStatus = targetActionAllowed === false
+    ? 'blocked'
+    : riskInputsKnown
+      ? riskLimitReasons.length > 0
+        ? 'blocked'
+        : 'provided_allowed'
+      : 'unknown';
+
+  return {
+    riskEnvelopeStatus,
+    riskLimitReasons: targetActionAllowed === false && riskLimitReasons.length === 0
+      ? ['target_action_disallowed']
+      : riskLimitReasons,
+    exposure,
+    maxBetUsd: safeMaxBetUsd,
+    accountBalanceUsd: safeAccountBalanceUsd,
+    openExposureUsd: safeOpenExposureUsd,
+    stakeUsd: safeStakeUsd
+  };
+}
+
+export async function readLiveExposure(positionLister = runBaw) {
+  let res;
+  try {
+    res = await positionLister(['prediction', 'position', 'list', '--json']);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'position_list_failed',
+      error: err?.message || String(err),
+      accountBalanceUsd: null,
+      openExposureUsd: null
+    };
+  }
+  if (!res || res.success !== true || !res.data || typeof res.data !== 'object') {
+    return {
+      ok: false,
+      reason: 'position_list_unavailable',
+      accountBalanceUsd: null,
+      openExposureUsd: null
+    };
+  }
+  const accountBalanceUsd = parseOptionalFinite(res.data.summary?.walletBalance);
+  if (accountBalanceUsd === null || accountBalanceUsd < 0) {
+    return {
+      ok: false,
+      reason: 'wallet_balance_unknown',
+      accountBalanceUsd: null,
+      openExposureUsd: null
+    };
+  }
+  const positions = res.data.positions;
+  if (!Array.isArray(positions)) {
+    return {
+      ok: false,
+      reason: 'open_positions_unknown',
+      accountBalanceUsd,
+      openExposureUsd: null
+    };
+  }
+  const ongoingCount = parseOptionalFinite(res.data.counts?.ongoingCount);
+  if (ongoingCount !== null && ongoingCount > positions.length) {
+    return {
+      ok: false,
+      reason: 'open_positions_incomplete',
+      accountBalanceUsd,
+      openExposureUsd: null
+    };
+  }
+  let openExposureUsd = 0;
+  for (const pos of positions) {
+    if (!pos || typeof pos !== 'object') {
+      return {
+        ok: false,
+        reason: 'invalid_position_entry',
+        accountBalanceUsd,
+        openExposureUsd: null
+      };
+    }
+    const status = pos.positionStatus ?? 'OPEN';
+    if (status !== 'OPEN') continue;
+    const cost = parseOptionalFinite(pos.totalCost);
+    if (cost === null || cost < 0) {
+      return {
+        ok: false,
+        reason: 'position_cost_unknown',
+        accountBalanceUsd,
+        openExposureUsd: null
+      };
+    }
+    openExposureUsd += cost;
+  }
+  return {
+    ok: true,
+    reason: null,
+    accountBalanceUsd,
+    openExposureUsd: parseFloat(openExposureUsd.toFixed(4))
+  };
+}
+
 export function buildOpportunityAssessment(state, evalResult, { stake = null, provider = 'jev' } = {}) {
   if (!['agent', 'jev'].includes(provider)) {
     return assessmentFailure('invalid_provider', 'provider 必须为 agent 或 jev。');
@@ -514,21 +669,21 @@ export function buildOpportunityAssessment(state, evalResult, { stake = null, pr
     : modelProbability;
   const grossEV = calculateEV(probability, marketPrice, chosenStake);
   const costs = assessExecutionCosts(state.executionCosts, grossEV);
-  const parsedMaxBetUsd = parseOptionalFinite(state.allowed?.maxBetUsd);
-  const maxBetUsd = parsedMaxBetUsd !== null && parsedMaxBetUsd >= 0
-    ? parsedMaxBetUsd
-    : null;
-  const parsedAccountBalanceUsd = parseOptionalFinite(state.allowed?.accountBalanceUsd);
-  const accountBalanceUsd = parsedAccountBalanceUsd !== null && parsedAccountBalanceUsd >= 0
-    ? parsedAccountBalanceUsd
-    : null;
-  const riskEnvelopeStatus = state.allowed?.targetActionAllowed === false
-    ? 'blocked'
-    : state.allowed?.targetActionAllowed === true && maxBetUsd !== null && accountBalanceUsd !== null
-      ? chosenStake > maxBetUsd || chosenStake > accountBalanceUsd
-        ? 'blocked'
-        : 'provided_allowed'
-      : 'unknown';
+  const {
+    riskEnvelopeStatus,
+    riskLimitReasons,
+    exposure,
+    maxBetUsd,
+    accountBalanceUsd,
+    openExposureUsd
+  } = evaluateExposureEnvelope({
+    targetActionAllowed: state.allowed?.targetActionAllowed,
+    maxBetUsd: state.allowed?.maxBetUsd,
+    accountBalanceUsd: state.allowed?.accountBalanceUsd,
+    openExposureUsd: state.allowed?.openExposureUsd,
+    stakeUsd: chosenStake,
+    requireMaxBet: true
+  });
   const parsedLiquidityUsd = state.liquidityUsd === null || state.liquidityUsd === undefined || state.liquidityUsd === ''
     ? null
     : parseOptionalFinite(state.liquidityUsd);
@@ -577,6 +732,7 @@ export function buildOpportunityAssessment(state, evalResult, { stake = null, pr
   const blockers = [];
   if (modelAction !== 'execute_plus_ev' || grossEV.evPercent <= 3) blockers.push('no_entry_signal');
   if (riskEnvelopeStatus !== 'provided_allowed') blockers.push('risk_envelope_' + riskEnvelopeStatus);
+  blockers.push(...riskLimitReasons);
   if (liquidityStatus !== 'sufficient') blockers.push('liquidity_' + liquidityStatus);
   if (costs.status !== 'verified') blockers.push('costs_' + costs.status);
   else if (!costs.netEV.isPositiveEV) blockers.push('nonpositive_net_ev');
@@ -601,7 +757,8 @@ export function buildOpportunityAssessment(state, evalResult, { stake = null, pr
           ? state.allowed.targetActionAllowed
           : null,
         maxBetUsd,
-        accountBalanceUsd
+        accountBalanceUsd,
+        openExposureUsd
       },
       sentiment: {
         polarScore: state.sentiment?.polarScore ?? null,
@@ -630,6 +787,8 @@ export function buildOpportunityAssessment(state, evalResult, { stake = null, pr
       modelSuggestedAction: modelAction,
       confidence,
       riskEnvelopeStatus,
+      riskLimitReasons,
+      exposure,
       liquidityStatus,
       costStatus: costs.status,
       grossEV,
@@ -1222,7 +1381,7 @@ export function parsePredictionTradeArgs(argv) {
   const command = argv.includes('--quote') ? '--quote' : '--execute';
   const allowed = new Set(command === '--quote'
     ? ['--tokenId', '--marketTopicId', '--amount', '--orderType', '--priceLimit']
-    : ['--quoteId', '--slippageBps', '--orderType', '--priceLimit']);
+    : ['--quoteId', '--amountIn', '--slippageBps', '--orderType', '--priceLimit']);
   const values = {};
   const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
@@ -1237,6 +1396,12 @@ export function parsePredictionTradeArgs(argv) {
       throw new Error(`参数 ${flag} 缺少值`);
     }
     values[flag.slice(2)] = value;
+  }
+  if (values.amountIn !== undefined) {
+    if (!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(String(values.amountIn))) {
+      throw new Error('参数 amountIn 必须为有效正数');
+    }
+    validatePositiveNumber(values.amountIn, 'amountIn', 100000);
   }
   predictionOrderArgs(values);
   return values;
@@ -1274,15 +1439,23 @@ export async function quotePrediction({
 }
 
 /**
- * 执行交易 (Execute - 强制审批闸门)
+ * 执行交易 (Execute - 强制审批闸门 + 30% 在途敞口硬约束)
  */
 export async function executePrediction({
   quoteId,
+  amountIn,
+  quote = null,
   slippageBps = 1000,
   approved = false,
   orderType = 'MARKET',
-  priceLimit
-}, { orderExecutor = runBaw } = {}) {
+  priceLimit,
+  bankroll = null,
+  assessment = null
+}, {
+  orderExecutor = runBaw,
+  positionLister = null,
+  positionExecutor = null
+} = {}) {
   if (approved !== true) {
     return {
       success: false,
@@ -1294,6 +1467,109 @@ export async function executePrediction({
   const orderArgs = predictionOrderArgs({ orderType, priceLimit });
   const safeQuoteId = validateSafeId(quoteId, 'quoteId');
   const safeSlippage = validateInteger(slippageBps, 'slippageBps', 0, 5000);
+
+  if (assessment !== null && assessment !== undefined) {
+    if (!assessment || typeof assessment !== 'object' ||
+        assessment.success !== true ||
+        assessment.decision?.readyForHumanApproval !== true ||
+        assessment.decision?.riskEnvelopeStatus !== 'provided_allowed') {
+      const reasons = assessment?.decision?.riskLimitReasons?.length
+        ? assessment.decision.riskLimitReasons
+        : (assessment?.decision?.executionEligibility?.blockers || ['assessment_not_ready']);
+      return {
+        success: false,
+        blockedByRiskGate: true,
+        riskEnvelopeStatus: assessment?.decision?.riskEnvelopeStatus ?? 'blocked',
+        riskLimitReasons: reasons,
+        exposure: assessment?.decision?.exposure ?? null,
+        error: `【风控闸门拦截】评估未通过执行准入检查 (${reasons.join(', ')})，禁止调用下单执行器。`
+      };
+    }
+  }
+
+  const rawAmountIn = amountIn ?? quote?.data?.amountIn ?? quote?.amountIn ?? assessment?.decision?.grossEV?.stake;
+  if (rawAmountIn === undefined || rawAmountIn === null || rawAmountIn === '') {
+    return {
+      success: false,
+      blockedByRiskGate: true,
+      riskEnvelopeStatus: 'unknown',
+      riskLimitReasons: ['missing_amount_in'],
+      exposure: null,
+      error: '【风控闸门拦截】执行前必须提供报价实际扣款 amountIn，以核验 30% 在途仓位上限。'
+    };
+  }
+  if (typeof rawAmountIn !== 'number' && typeof rawAmountIn !== 'string') {
+    throw new Error('参数 amountIn 必须为有效正数');
+  }
+  if (typeof rawAmountIn === 'string' && !/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(rawAmountIn.trim())) {
+    throw new Error('参数 amountIn 必须为有效正数');
+  }
+  const safeAmountIn = validatePositiveNumber(rawAmountIn, 'amountIn', 100000);
+
+  let targetActionAllowed = true;
+  let maxBetUsd = null;
+  let accountBalanceUsd = null;
+  let openExposureUsd = null;
+  let liveFailureReason = null;
+
+  const bankrollSource = bankroll && typeof bankroll === 'object' && !Array.isArray(bankroll)
+    ? bankroll
+    : (assessment?.forecast?.riskInputs && typeof assessment.forecast.riskInputs === 'object'
+      ? assessment.forecast.riskInputs
+      : null);
+
+  if (bankrollSource) {
+    if (typeof bankrollSource.targetActionAllowed === 'boolean') {
+      targetActionAllowed = bankrollSource.targetActionAllowed;
+    }
+    maxBetUsd = nonNegativeFiniteOrNull(bankrollSource.maxBetUsd, 'bankroll.maxBetUsd');
+    accountBalanceUsd = nonNegativeFiniteOrNull(
+      bankrollSource.balance !== undefined ? bankrollSource.balance : bankrollSource.accountBalanceUsd,
+      'bankroll.balance'
+    );
+    openExposureUsd = nonNegativeFiniteOrNull(bankrollSource.openExposureUsd, 'bankroll.openExposureUsd');
+  }
+
+  const liveReader = positionLister || positionExecutor || (
+    accountBalanceUsd === null && openExposureUsd === null && orderExecutor === runBaw
+      ? runBaw
+      : null
+  );
+
+  if (liveReader !== null) {
+    const live = await readLiveExposure(liveReader);
+    if (!live.ok) {
+      liveFailureReason = live.reason;
+      accountBalanceUsd = null;
+      openExposureUsd = null;
+    } else {
+      accountBalanceUsd = live.accountBalanceUsd;
+      openExposureUsd = live.openExposureUsd;
+    }
+  }
+
+  const envelope = evaluateExposureEnvelope({
+    targetActionAllowed,
+    maxBetUsd,
+    accountBalanceUsd,
+    openExposureUsd,
+    stakeUsd: safeAmountIn,
+    requireMaxBet: maxBetUsd !== null
+  });
+
+  if (envelope.riskEnvelopeStatus !== 'provided_allowed') {
+    const reasons = envelope.riskLimitReasons.length > 0
+      ? envelope.riskLimitReasons
+      : [liveFailureReason || 'risk_envelope_unknown'];
+    return {
+      success: false,
+      blockedByRiskGate: true,
+      riskEnvelopeStatus: envelope.riskEnvelopeStatus,
+      riskLimitReasons: reasons,
+      exposure: envelope.exposure,
+      error: `【风控闸门拦截】交易未通过 30% 在途敞口硬约束 (${reasons.join(', ')})，已阻止下单。`
+    };
+  }
 
   return orderExecutor([
     'prediction', 'trade', 'place-order',
@@ -1351,7 +1627,8 @@ async function main() {
   --timeout-ms <ms>       Jev 请求期限，默认 15000；仅影响可选 Jev 调用
   --score-file <path>     只读评分用户提供的 JSONL 历史 (workflow/market/human 概率与赛果)
   --quote                 向盘口请求精确深度报价 (--tokenId <id> --marketTopicId <id> [--amount <num> 未声明默认 1.0])
-  --execute               执行链上下单 (--quoteId <id> --approved) [安全闸门强制拦截未审批操作]
+  --execute               执行链上下单 (--quoteId <id> --amountIn <num> --approved) [安全闸门与 30% 敞口硬约束强制拦截]
+  --amountIn <num>        execute: 报价实际扣款金额 (USDT)，用于执行前实时校验 30% 在途敞口上限
   --orderType <type>      quote/execute: MARKET (默认) 或 LIMIT；两步必须一致
   --priceLimit <price>    LIMIT 必填，USDT 价格 (0,1)；MARKET 禁用；LIMIT 不保证 Maker
   --slippageBps <bps>     execute: 使用报价返回值；默认 1000 仅为兼容旧调用
@@ -1374,6 +1651,13 @@ async function main() {
         optional: ['marketObservedAt', 'sharpBookmaker', 'liquidityUsd', 'sentiment', 'allowed', 'executionCosts', 'agentAssessment']
       },
       agentAssessment: AGENT_ASSESSMENT_SCHEMA,
+      riskEnvelope: {
+        allowedFields: ['targetActionAllowed', 'maxBetUsd', 'accountBalanceUsd', 'openExposureUsd'],
+        buildPredictionTradeStateBankroll: ['targetActionAllowed', 'maxBetUsd', 'balance', 'openExposureUsd'],
+        maxOpenExposureRatio: MAX_OPEN_EXPOSURE_RATIO,
+        rule: '(openExposureUsd + stake) <= maxOpenExposureRatio * (accountBalanceUsd + openExposureUsd)；余额与在途本金须实时读取，任一缺失为 unknown',
+        executionGate: 'executePrediction 与 --execute 执行前强制读取报价实际扣款 amountIn 与最新钱包余额/在途持仓，未通过评估或超限时物理阻断且不得调用下单执行器'
+      },
       provider: { default: 'auto', modes: ['auto', 'agent', 'jev'], enableJev: '项目 .env 中的非空 TYPESAFE_API_KEY' },
       transport: ['--stdin', '--json', '--file'],
       persistence: 'none',
@@ -1430,6 +1714,27 @@ async function main() {
       throw new Error('runBaw 数组参数强制防线失效！');
     }
     console.log('5. [PASS] runBaw 数组传参物理防线校验通过 (严禁拼接 shell 字符串)');
+
+    // 算子 6: 执行阶段 30% 敞口硬约束物理拦截测试
+    let executorCalled = false;
+    const riskGateTest = await executePrediction(
+      {
+        quoteId: 'test_liveness_id',
+        amountIn: 1.02,
+        approved: true,
+        bankroll: { balance: 1.455, openExposureUsd: 0 }
+      },
+      {
+        orderExecutor: () => {
+          executorCalled = true;
+          return { success: true };
+        }
+      }
+    );
+    if (!riskGateTest.blockedByRiskGate || executorCalled) {
+      throw new Error('执行阶段 30% 敞口硬约束失效！');
+    }
+    console.log('6. [PASS] 执行阶段 30% 敞口硬约束物理拦截校验通过 (超限时 orderExecutor 零调用)');
 
     console.log('\n>>> [TEST] 本地检查通过；未调用 Jev API、BAW 或真实钱包。\n');
     process.exit(0);
@@ -1508,14 +1813,14 @@ async function main() {
 
   // 5. 执行下单 Execute
   if (hasFlag('--execute')) {
-    const { quoteId, slippageBps = 1000, approved = false, orderType, priceLimit } = parsePredictionTradeArgs(args);
+    const { quoteId, slippageBps = 1000, amountIn, approved = false, orderType, priceLimit } = parsePredictionTradeArgs(args);
 
     if (!quoteId) {
       console.error('错误: 缺少 --quoteId');
       process.exit(1);
     }
 
-    const execRes = await executePrediction({ quoteId, slippageBps, approved, orderType, priceLimit });
+    const execRes = await executePrediction({ quoteId, slippageBps, amountIn, approved, orderType, priceLimit });
     console.log(JSON.stringify(execRes, null, 2));
     process.exit(execRes.success ? 0 : 1);
   }

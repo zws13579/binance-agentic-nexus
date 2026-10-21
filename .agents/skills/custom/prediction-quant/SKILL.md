@@ -39,12 +39,12 @@ node .agents/skills/custom/prediction-quant/scripts/engine.mjs --score-file <for
 # 只读询价；下注金额沿用用户指令，未声明时默认 1 USDT
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --quote --tokenId <id> --marketTopicId <id> --amount 1
 
-# 仅在用户明确批准具体交易后执行
-node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --approved
+# 仅在用户明确批准具体交易后执行（强制校验报价实际扣款 amountIn 与最新 30% 在途敞口上限）
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --amountIn <报价实际扣款> --approved
 
-# LIMIT 询价与执行：必须使用同一订单类型和限价，并沿用报价返回的滑点
+# LIMIT 询价与执行：必须使用同一订单类型和限价，并沿用报价返回的滑点与实际扣款
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --quote --tokenId <id> --marketTopicId <id> --amount 1 --orderType LIMIT --priceLimit 0.6
-node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --orderType LIMIT --priceLimit 0.6 --slippageBps <报价返回值> --approved
+node .agents/skills/custom/prediction-quant/scripts/engine.mjs --execute --quoteId <id> --amountIn <报价实际扣款> --orderType LIMIT --priceLimit 0.6 --slippageBps <报价返回值> --approved
 
 # 结算后按用户授权赎回
 node .agents/skills/custom/prediction-quant/scripts/engine.mjs --redeem --tokenIds <id1,id2>
@@ -102,6 +102,8 @@ LIMIT 不保证 Maker：当前本地 BAW help 未提供 post-only，可能立即
 - 缺流动性、账户余额、限额或执行方向许可时保持未知。低于 1000 USDT 的流动性不通过检查。
 - 净 EV 需要同一注额的成本对象 `executionCosts: {totalUsd, stakeUsd, source, observedAt}`；否则只报毛 EV，netEV 为 null。没有默认 2% 费用，也不能推断成本为零。
 - 同场不得同时下注互斥方向属于执行约束，不能作为胜率先验。
+- 30% 在途上限在评估与执行两阶段均由引擎硬性强制：评估阶段 `bankroll` 必须提供实时读取的 `balance` 与 `openExposureUsd`，超限输出 `exposure_cap_exceeded` 且 `readyForHumanApproval=false`；执行阶段 `executePrediction` / `--execute` 强制校验报价实际扣款 `--amountIn` 与最新持仓/余额，超限或缺失时以 `blockedByRiskGate=true` 物理阻断，绝不调用下单执行器。总资产低于 `1 / 0.30` USDT 时直接 NO_TRADE 并告知用户，不扫描、不推荐。
+- 每张决策卡必须附**实盘战绩行**：从 `baw prediction position settled-history` 统计已结算笔数、实际赢场、Σ买入价（市场隐含赢场）与累计净盈亏。实际赢场 ≤ 市场隐含赢场时，EV 一律标注“未经实盘验证”，并建议暂停或降低注额。
 - 审批要求适用于 Agent-only 和 Agent + Jev 两种模式。
 
 决策卡应包含：事件/选项、行情时间、Agent 原始概率/Jev 原始概率（未使用时明确说明）、独立锚点及来源、最终概率来源、毛 EV、净 EV/成本、未知项、分歧、候选金额和审批状态。
