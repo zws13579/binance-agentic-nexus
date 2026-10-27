@@ -17,7 +17,45 @@ const crypto = require('crypto');
 const path = require('path');
 const D = require('./trading_primitives.cjs');
 
-function createClient({ fetchImpl = globalThis.fetch, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), loadEnv = true, credentials = {} } = {}) {
+class BinanceError extends Error {
+  constructor(message, { code = null, type = 'UNKNOWN', retryable = false, httpStatus = null } = {}) {
+    super(message);
+    this.name = 'BinanceError';
+    this.code = code;
+    this.type = type;
+    this.retryable = retryable;
+    this.httpStatus = httpStatus;
+    this.status = type === 'AMBIGUOUS_STATE' ? 'UNKNOWN' : 'FAILED';
+  }
+}
+
+class TransactionContext {
+  constructor(requestId, now = Date.now) {
+    this.requestId = requestId || `BAN_${now()}_${crypto.randomBytes(6).toString('hex')}`;
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(this.requestId)) throw new BinanceError('Invalid request ID', {type:'PARAMS'});
+    this.correlationId = 'BAN_' + crypto.createHash('sha256').update(this.requestId).digest('hex').slice(0,24);
+    this.entryClientOrderId = this.correlationId + '_ENT';
+    this.slClientOrderId = this.correlationId + '_SL';
+    this.tpClientOrderId = this.correlationId + '_TP';
+    this.stage = 'INITIALIZED';
+  }
+}
+
+function generateClientOrderId(prefix='BAN', now=Date.now) { return `${prefix.slice(0,8)}_${now()}_${crypto.randomBytes(5).toString('hex')}`.slice(0,36); }
+
+function normalizeOrder(raw) {
+  if(!raw || typeof raw!=='object' || raw.code<0 || !raw.orderId || !raw.status || raw.executedQty===undefined || raw.origQty===undefined) throw new BinanceError('Invalid order response', {code:raw?.code,type:'API_ERROR'});
+  if(!raw.symbol||!['BUY','SELL'].includes(raw.side)||!['BOTH','LONG','SHORT'].includes(raw.positionSide)||!raw.type||!raw.clientOrderId||!['NEW','PARTIALLY_FILLED','FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED','PENDING_CANCEL'].includes(raw.status)) throw new BinanceError('Invalid order identity or status',{type:'API_ERROR'});
+  try {
+    const origQty=D.decimal(raw.origQty).text,executedQty=D.decimal(raw.executedQty,{positive:false}).text;
+    if(!Number.isFinite(Number(origQty))||!Number.isFinite(Number(executedQty))||D.compare(executedQty,origQty)>0||raw.status==='FILLED'&&D.compare(executedQty,origQty)!==0||raw.status==='PARTIALLY_FILLED'&&D.compare(executedQty,'0')===0) throw Error('Inconsistent fill');
+  } catch { throw new BinanceError('Invalid order fill state',{type:'API_ERROR'}); }
+  let orderId;
+  try { orderId=D.idString(raw.orderId); } catch(error) { throw new BinanceError(error.message,{type:'PARAMS'}); }
+  return {...raw,orderId,executedQty:String(raw.executedQty ?? '0'),origQty:String(raw.origQty ?? '0'),avgPrice:String(raw.avgPrice ?? raw.price ?? '0')};
+}
+
+function createClient({ fetchImpl = globalThis.fetch, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), loadEnv = true, credentials = {}, apiEnv } = {}) {
 
 // ============================================================================
 // 1. Configuration, Credentials & Error Types
@@ -46,37 +84,14 @@ if (loadEnv && fs.existsSync(actualEnvPath)) {
 
 const API_KEY = credentials.apiKey || env.BINANCE_API_KEY || (loadEnv ? process.env.BINANCE_API_KEY : undefined);
 const SECRET_KEY = credentials.secretKey || env.BINANCE_SECRET_KEY || (loadEnv ? process.env.BINANCE_SECRET_KEY : undefined);
+const API_ENV = apiEnv ?? (loadEnv ? (process.env.BINANCE_API_ENV || env.BINANCE_API_ENV || 'prod') : 'prod');
 const SPOT_HOST = 'https://api.binance.com';
 const FAPI_HOST = 'https://fapi.binance.com';
 
 let timeOffset = null;
 
-// Structured Error Type (Categorized by failure domain)
-class BinanceError extends Error {
-  constructor(message, { code = null, type = 'UNKNOWN', retryable = false, httpStatus = null } = {}) {
-    super(message);
-    this.name = 'BinanceError';
-    this.code = code;
-    this.type = type; // 'NETWORK' | 'RATE_LIMIT' | 'AUTH' | 'MARGIN' | 'PARAMS' | 'AMBIGUOUS_STATE' | 'API_ERROR'
-    this.retryable = retryable;
-    this.httpStatus = httpStatus;
-    this.status = type === 'AMBIGUOUS_STATE' ? 'UNKNOWN' : 'FAILED';
-  }
-}
+if (API_ENV !== 'prod') throw new BinanceError('BINANCE_API_ENV must be "prod"; non-production environments are not supported', { type: 'CONFIG' });
 
-// In-Flight Transaction Context
-class TransactionContext {
-  constructor(requestId) {
-    this.requestId = requestId || `BAN_${now()}_${crypto.randomBytes(6).toString('hex')}`;
-    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(this.requestId)) throw new BinanceError('Invalid request ID', {type:'PARAMS'});
-    this.correlationId = 'BAN_' + crypto.createHash('sha256').update(this.requestId).digest('hex').slice(0,24);
-    this.entryClientOrderId = this.correlationId + '_ENT';
-    this.slClientOrderId = this.correlationId + '_SL';
-    this.tpClientOrderId = this.correlationId + '_TP';
-    this.stage = 'INITIALIZED';
-  }
-}
-function generateClientOrderId(prefix='BAN') { return `${prefix.slice(0,8)}_${now()}_${crypto.randomBytes(5).toString('hex')}`.slice(0,36); }
 function paramsError(message) { return new BinanceError(message, {type:'PARAMS'}); }
 function requireArray(data, name) { if(!Array.isArray(data)) throw new BinanceError('Invalid '+name+' response', {type:'API_ERROR'}); return data; }
 function positiveOrZero(value) {try{const text=D.decimal(value,{positive:false}).text;if(!Number.isFinite(Number(text)))throw Error('Decimal must be finite');return text;}catch(e){throw paramsError(e.message);}}
@@ -144,14 +159,6 @@ function fundingHistoryRecord(row,operation,source,destination) {
    requestedAt:row.timestamp??row.time??row.createTime??null,checkedAt:new Date(now()).toISOString(),
    identityVerified:identityValid,status:!identityValid?'UNKNOWN':completed?'CONFIRMED':failed?'FAILED':['PENDING','PROCESSING','CREATED'].includes(row.status)?'SUBMITTED':'UNKNOWN',rawStatus:row.status??null};
 }
-// Output Normalizer for Orders
-function normalizeOrder(raw) {
-  if(!raw || typeof raw!=='object' || raw.code<0 || !raw.orderId || !raw.status || raw.executedQty===undefined || raw.origQty===undefined) throw new BinanceError('Invalid order response', {code:raw?.code,type:'API_ERROR'});
-  if(!raw.symbol||!['BUY','SELL'].includes(raw.side)||!['BOTH','LONG','SHORT'].includes(raw.positionSide)||!raw.type||!raw.clientOrderId||!['NEW','PARTIALLY_FILLED','FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED','PENDING_CANCEL'].includes(raw.status))throw new BinanceError('Invalid order identity or status',{type:'API_ERROR'});
-  try{positive(raw.origQty);positiveOrZero(raw.executedQty);if(D.compare(raw.executedQty,raw.origQty)>0||raw.status==='FILLED'&&D.compare(raw.executedQty,raw.origQty)!==0||raw.status==='PARTIALLY_FILLED'&&D.compare(raw.executedQty,'0')===0)throw Error('Inconsistent fill');}catch{throw new BinanceError('Invalid order fill state',{type:'API_ERROR'});}
-  return {...raw, orderId:exchangeId(raw.orderId), executedQty:String(raw.executedQty ?? '0'), origQty:String(raw.origQty ?? '0'), avgPrice:String(raw.avgPrice ?? raw.price ?? '0')};
-}
-
 // ============================================================================
 // 2. Core Network, Time Sync & Read Retries
 // ============================================================================
@@ -574,7 +581,7 @@ const Client = {
   async placeOrder(params) {
     const orderParams = { ...params };
     if (!orderParams.newClientOrderId) {
-      orderParams.newClientOrderId = generateClientOrderId('BAN_ORD');
+      orderParams.newClientOrderId = generateClientOrderId('BAN_ORD',now);
     }
     const res = await signedReq(FAPI_HOST, '/fapi/v1/order', orderParams, 'POST');
     try {return normalizeOrder(res);}catch {throw new BinanceError('Entry response invalid; submission result unknown',{type:'AMBIGUOUS_STATE'});}
@@ -667,7 +674,7 @@ const Client = {
     try{return await this.getOrder(symbol,{origClientOrderId:clientOrderId});}catch(err){if(err.code===-2013)return null;throw err;}
   },
   async reconcile(symbol,requestId) {
-    if(!requestId)throw paramsError('Explicit request ID required');const sym=name(symbol),tx=new TransactionContext(requestId);
+    if(!requestId)throw paramsError('Explicit request ID required');const sym=name(symbol),tx=new TransactionContext(requestId,now);
     const blockers=[],queryErrors=[],nextActions=[],terminal=['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'];
     const owned=a=>a&&owner(a)&&a.clientAlgoId.startsWith(tx.correlationId+'_');
     const recordError=(source,err)=>{queryErrors.push({source,type:err.type||'API_ERROR',code:err.code??null,message:err.message});blockers.push(source+' could not be verified');};
@@ -779,7 +786,7 @@ const Client = {
       blockers:[...new Set(blockers)],queryErrors,checkedAt:new Date(now()).toISOString(),nextActions,nextAction:nextActions.join('; ')};
   },
   async openPositionWithTPSL(input) {
-    modeFlags(input);const symbol=name(input.symbol),tx=new TransactionContext(input.requestId||input.clientOrderId);
+    modeFlags(input);const symbol=name(input.symbol),tx=new TransactionContext(input.requestId||input.clientOrderId,now);
     const isLimit=(input.type??'MARKET')==='LIMIT';
     const waitMs=Number(input.waitMs??(isLimit?0:30000));
     if(!Number.isSafeInteger(waitMs)||waitMs<0||(!isLimit&&waitMs===0))throw paramsError('wait-ms must be a nonnegative safe integer; zero is only valid for LIMIT');
@@ -918,7 +925,7 @@ const Client = {
       return {closeSuccess:true,status:'CONFIRMED',alreadyFlat:true,cancelledAlgos:direction?await this._clearOwnedProtection(sym,mode.hedge?direction:'BOTH',options.requestPrefix):[]};
     }
     const qty=absQty(target.positionAmt),closeSide=direction==='LONG'?'SELL':'BUY';
-    const closeParams={symbol:sym,side:closeSide,type:'MARKET',quantity:qty,positionSide:mode.hedge?direction:'BOTH',newClientOrderId:generateClientOrderId('BAN_CLOSE'),...(mode.hedge?{}:{reduceOnly:'true'})};
+    const closeParams={symbol:sym,side:closeSide,type:'MARKET',quantity:qty,positionSide:mode.hedge?direction:'BOTH',newClientOrderId:generateClientOrderId('BAN_CLOSE',now),...(mode.hedge?{}:{reduceOnly:'true'})};
     let closeOrder;try{closeOrder=await this.placeOrder(closeParams);}catch(err){if(!ambiguous(err))throw err;closeOrder=null;}
     for(let i=0;i<5;i++){await sleep(200);const fresh=await this.getPositionRisk(sym);const remaining=this._matchPosition(fresh,direction,mode);
       if(!remaining) {if(!mode.hedge&&fresh.length)throw new BinanceError('Unexpected reverse exposure after close',{type:'AMBIGUOUS_STATE'});return {closeSuccess:true,status:'CONFIRMED',closeOrder,cancelledAlgos:await this._clearOwnedProtection(sym,mode.hedge?direction:'BOTH',options.requestPrefix)};}
@@ -1039,7 +1046,7 @@ const Client = {
     const related=old.filter(x=>x.symbol===sym&&x.positionSide===mode.wireSide&&x.side===(direction==='LONG'?'SELL':'BUY')&&owner(x));
     const prefixes=[...new Set(related.map(x=>x.clientAlgoId.slice(0,28)))];
     if(!clientAlgoIdPrefix&&prefixes.length>1)throw paramsError('Multiple protection request prefixes; specify the request ID to maintain');
-    const prefix=clientAlgoIdPrefix||prefixes[0]||new TransactionContext().correlationId;
+    const prefix=clientAlgoIdPrefix||prefixes[0]||new TransactionContext(undefined,now).correlationId;
     if(!/^BAN_[a-f0-9]{24}$/.test(prefix))throw paramsError('Invalid protection ownership prefix');
     const priorIds=old.filter(x=>x.symbol===sym&&x.positionSide===mode.wireSide&&x.side===(direction==='LONG'?'SELL':'BUY')&&(owner(x)&&x.clientAlgoId.startsWith(prefix+'_')||externalIds.includes(String(x.algoId)))).map(x=>String(x.algoId));
     const results={symbol:sym,correlationId:prefix,status:'SUBMITTED',cancelled:[],submissions:[],retainedOldAlgoIds:priorIds,unknownCancellationAlgoIds:[],oldProtectionRetained:priorIds.length>0};
@@ -1120,7 +1127,7 @@ const COMMANDS = {
   'reconcile': {minArgs:3,usage:'<symbol> --request-id <id>',run:args=>Client.reconcile(args[0],cliOptions(args.slice(1)).requestId)},
   'set-tpsl': {
     minArgs: 4, usage: '<symbol> <LONG|SHORT> <slPrice|-> <tpPrice|-> [qty] [--request-id <id>] [--replace-algo-id <id>]', desc: 'Bind TP/SL to existing position; - leaves a leg unchanged',
-    run: args => {const hasQuantity=args[4]!==undefined&&!args[4].startsWith('--'),options=cliOptions(args.slice(hasQuantity?5:4));return Client.setTPSL({ symbol: args[0], positionSide: args[1], stopLossPrice: args[2]==='-'?undefined:args[2], takeProfitPrice: args[3]==='-'?undefined:args[3], quantity:hasQuantity?args[4]:undefined,clientAlgoIdPrefix:options.requestId?new TransactionContext(options.requestId).correlationId:undefined,replaceAlgoIds:options.replaceAlgoIds??[] });}
+    run: args => {const hasQuantity=args[4]!==undefined&&!args[4].startsWith('--'),options=cliOptions(args.slice(hasQuantity?5:4));return Client.setTPSL({ symbol: args[0], positionSide: args[1], stopLossPrice: args[2]==='-'?undefined:args[2], takeProfitPrice: args[3]==='-'?undefined:args[3], quantity:hasQuantity?args[4]:undefined,clientAlgoIdPrefix:options.requestId?new TransactionContext(options.requestId,now).correlationId:undefined,replaceAlgoIds:options.replaceAlgoIds??[] });}
   },
   'open-tpsl': {
     minArgs:7, usage:'<symbol> <BUY|SELL> <LONG|SHORT> <qty> <MARKET|LIMIT> [price] <sl> <tp> <--dry-run|--approved> [--wait-ms <ms>] [risk flags]',
@@ -1143,10 +1150,75 @@ async function cli(argv=process.argv.slice(2)) {
  const result=await def.run(args); console.log(JSON.stringify(result,null,2));if(['FAILED','UNKNOWN'].includes(result?.status)||result?.rollbackSucceeded===false||result?.dryRun===true&&(result?.readyForApproval===false||result?.plan?.readyForApproval===false))process.exitCode=1;
 }
 Client.cli=cli;
-Client.primitives=D;Client.BinanceError=BinanceError;Client.TransactionContext=TransactionContext;Client.generateClientOrderId=generateClientOrderId;Client.normalizeOrder=normalizeOrder;
+Client.primitives=D;Client.BinanceError=BinanceError;Client.TransactionContext=TransactionContext;Client.generateClientOrderId=(prefix='BAN')=>generateClientOrderId(prefix,now);Client.normalizeOrder=normalizeOrder;
 return Client;
 }
-const Client=createClient({loadEnv:process.env.BAN_TEST_NO_ENV!=='1'});
-Client.Client=Client;Client.createClient=createClient;
+let defaultClient;
+const clientOverrides=new Map();
+const defaultValues=new Map();
+function getDefaultClient() {
+  if (!defaultClient) {
+    defaultClient = createClient({loadEnv:process.env.BAN_TEST_NO_ENV!=='1'});
+    for(const [property,value] of clientOverrides) {
+      if(!defaultValues.has(property))defaultValues.set(property,defaultClient[property]);
+      defaultClient[property]=value;
+    }
+  }
+  return defaultClient;
+}
+const ClientTarget = {
+  createClient,
+  Client: null,
+  BinanceError,
+  TransactionContext,
+  generateClientOrderId,
+  normalizeOrder,
+  primitives: D
+};
+const Client = new Proxy(ClientTarget, {
+  get(target, property) {
+    if (property === 'Client') return Client;
+    if (Reflect.has(target, property)) return Reflect.get(target, property);
+    if (typeof property === 'symbol') return undefined;
+    return getDefaultClient()[property];
+  },
+  set(target, property, value) {
+    clientOverrides.set(property,value);
+    if(defaultClient) {
+      if(!defaultValues.has(property))defaultValues.set(property,defaultClient[property]);
+      defaultClient[property]=value;
+    }
+    return Reflect.set(target, property, value);
+  },
+  deleteProperty(target, property) {
+    clientOverrides.delete(property);
+    const deleted=Reflect.deleteProperty(target,property);
+    if(defaultClient) {
+      const original=defaultValues.get(property);
+      if(original===undefined)delete defaultClient[property];
+      else defaultClient[property]=original;
+      defaultValues.delete(property);
+    }
+    return deleted;
+  },
+  has(target, property) { return Reflect.has(target, property) || property in getDefaultClient(); },
+  ownKeys(target) { return [...new Set([...Reflect.ownKeys(target), ...Reflect.ownKeys(getDefaultClient())])]; },
+  getOwnPropertyDescriptor(target, property) {
+    const own = Reflect.getOwnPropertyDescriptor(target, property);
+    if (own) return own;
+    const instance = getDefaultClient();
+    if (!(property in instance)) return undefined;
+    return {configurable:true, enumerable:true, writable:false, value:instance[property]};
+  }
+});
+ClientTarget.Client=Client;
 module.exports=Client;
-if(require.main===module)Client.cli().catch(err=>{console.error(JSON.stringify({status:err.status||'FAILED',type:err.type||'ERROR',code:err.code,message:err.message,...(err.preview?{preview:err.preview}:{}),...(err.protectionResult?{protectionResult:err.protectionResult}:{})}));process.exitCode=1;});
+if(require.main===module) {
+  try {
+    const cliClient=createClient({loadEnv:process.env.BAN_TEST_NO_ENV!=='1'});
+    cliClient.cli().catch(err=>{console.error(JSON.stringify({status:err.status||'FAILED',type:err.type||'ERROR',code:err.code,message:err.message,...(err.preview?{preview:err.preview}:{}),...(err.protectionResult?{protectionResult:err.protectionResult}:{})}));process.exitCode=1;});
+  } catch(err) {
+    console.error(JSON.stringify({status:err.status||'FAILED',type:err.type||'ERROR',code:err.code,message:err.message}));
+    process.exitCode=1;
+  }
+}

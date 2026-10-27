@@ -78,5 +78,3 @@ $RECYCLE.BIN/
 .claude/
 .cursor/
 .antigravity/
-# Disposable checks belong in tmp/; ignore accidental test artifacts.
-tests/

@@ -1,53 +1,22 @@
-# 网络代理双模式详解
+# Network proxy modes
 
-> 迁移自原 AGENTS.md §二-1，供 Agent 按需读取。
+## TUN mode
 
-## 网络现状
+When a system TUN proxy handles outbound traffic, run the Node scripts normally. Leave `HTTP_PROXY` and `HTTPS_PROXY` blank in `.env.example` and `.env` unless the local network setup requires otherwise.
 
-访问币安服务（CEX REST API、Web3 接口、Square 端点、DNS 解析）在特定网络环境下需要代理支持。
+## Port-proxy mode
 
-## 模式 1：TUN 模式（系统级透明代理，首选）
-
-当前环境已配置 TUN 虚拟网卡代理。在 TUN 模式开启时，操作系统会在网络层接管所有进出流量。
-
-**脚本执行**：所有自定义 Node.js / Python 脚本或系统命令均可**直接原生运行**（如 `node your_script.mjs`），无需附加任何代理引导参数。
-
-## 模式 2：端口代理模式（备用方案 / TUN 关闭时）
-
-若未开启 TUN 模式，通过 `.env` 中的 `HTTP_PROXY` 与 `HTTPS_PROXY` 指定代理地址与端口（依据本地代理软件的实际端口设置）。
-
-### 为何存在 `scripts/proxy_bootstrap.mjs`
-
-Node.js 原生 `fetch`（基于 `undici`）默认不会主动读取环境变量中的 `HTTP_PROXY`。在**纯端口代理环境（无 TUN）**下，可通过以下方式注入 `ProxyAgent` 作为备用通道：
+By default, Node's built-in `fetch` does not automatically route requests through the proxy environment variables. The optional bootstrap uses the project-pinned `undici` `ProxyAgent` only when a proxy URL is configured:
 
 ```bash
-node --import ./scripts/proxy_bootstrap.mjs your_script.mjs
+npm ci
+node --import ./scripts/proxy_bootstrap.mjs scripts/binance_unified.js ticker BTCUSDT
 ```
 
-在 TUN 模式正常工作时，完全无需挂载此脚本。
+The dependency is resolved from this project. The bootstrap does not search Node, npm, or user-global installation directories. If local dependencies are missing or incompatible, it fails with a setup message rather than running without the requested proxy.
 
-### 跨设备路径兼容
+The ticker example makes a public GET request to Binance production. Proxy setup and the request destination are separate concerns: `BINANCE_API_ENV` accepts only `prod`; testnet support is not implemented. Tests use injected fake fetches and do not verify real proxy connectivity.
 
-`proxy_bootstrap.mjs` 内部采用动态多候选路径解析 `undici`（结合 `process.execPath`），避免因不同设备 Node.js 安装路径差异导致模块加载失败。
+## Optional BAW CLI
 
-## 代理模式验证方法
-
-```bash
-# 验证 TUN 透明代理连通性（直连）
-node -e "fetch('https://api.binance.com/api/v3/ping').then(r=>console.log('TUN OK', r.status)).catch(e=>console.log('TUN FAIL', e.message))"
-
-# 验证备用端口代理引导（挂载 proxy_bootstrap）
-node --import ./scripts/proxy_bootstrap.mjs -e "fetch('https://api.binance.com/api/v3/ping').then(r=>console.log('Proxy OK', r.status))"
-```
-
-## `baw` CLI 升级后端口代理注入丢失
-
-- `npm install -g` 会重写 `baw.cmd` 和 `baw.ps1` 入口脚本，导致手动注入的 `--import proxy_bootstrap.mjs` 参数被覆盖。
-- **TUN 模式用户可忽略**：TUN 开启时 `baw` 无需 `--import` 也能正常联网。
-- 若需恢复端口代理支持，在 `baw.cmd` 最后一行的 `"%_prog%"` 后、`"%dp0%\..."` 前插入：
-
-```
---import "file:///<项目绝对路径>/scripts/proxy_bootstrap.mjs"
-```
-
-`baw.ps1` 中类似，在所有 `node` 调用参数中追加相同的 `--import` 标志。
+The local `baw` installation does not automatically inherit this bootstrap. Some npm or installer updates may replace command shims. If a BAW workflow needs proxy routing, follow the selected CLI version's official project-local launch instructions and verify the actual route; do not treat this repository's Node bootstrap as proof that BAW is proxied.

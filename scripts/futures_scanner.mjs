@@ -18,6 +18,12 @@ function loadProjectEnv() {
   }
 }
 
+function validateApiEnvironment(apiEnv) {
+  if ((apiEnv || 'prod') !== 'prod') {
+    throw new Error('BINANCE_API_ENV must be "prod"; non-production environments are not supported');
+  }
+}
+
 async function poolAll(items, fn, concurrency = 5) {
   const results = new Array(items.length);
   let cursor = 0;
@@ -136,13 +142,14 @@ function currentCandleEvidence(rows, serverTime) {
 
 export async function scanFuturesMarket({
   top = 5, interval, intervals = ['4h', '1h', '15m'], minVolume = 10_000_000,
-  fetchImpl = globalThis.fetch, now = Date.now, loadEnv = true, baseUrl = 'https://fapi.binance.com'
+  fetchImpl = globalThis.fetch, now = Date.now, loadEnv = true, baseUrl = 'https://fapi.binance.com', apiEnv
 } = {}) {
   if (!Number.isSafeInteger(top) || top <= 0) throw new Error('top must be a positive integer');
   if (!Number.isFinite(minVolume) || minVolume < 0) throw new Error('minVolume must be a nonnegative number');
   const requestedIntervals = [...new Set(interval ? [interval] : intervals)];
   if (!requestedIntervals.length || requestedIntervals.some(value => !INTERVALS.has(value))) throw new Error('Unsupported kline interval');
   if (loadEnv) loadProjectEnv();
+  validateApiEnvironment(apiEnv ?? (loadEnv ? process.env.BINANCE_API_ENV : undefined));
   const request = async (pathname, params) => {
     const url = new URL(pathname, baseUrl);
     if (params) url.search = new URLSearchParams(params).toString();

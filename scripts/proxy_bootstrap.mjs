@@ -1,6 +1,6 @@
 import fs from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Pre-load .env from project root or process.cwd() if exists
 const __bootstrapDir = dirname(fileURLToPath(import.meta.url));
@@ -36,25 +36,12 @@ if (proxyUrl) {
   let setGlobalDispatcher, ProxyAgent;
   try {
     ({ setGlobalDispatcher, ProxyAgent } = await import('undici'));
-  } catch {
-    // Dynamically resolve undici from Node.js install / user directories (portable across machines & Linux/WSL)
-    const candidates = [
-      join(dirname(process.execPath), 'node_modules', 'undici', 'index.js'),
-      join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'node_modules', 'undici', 'index.js'),
-      join(dirname(process.execPath), '..', 'lib', 'node_modules', '@binance', 'agentic-wallet', 'node_modules', 'undici', 'index.js'),
-      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'nodejs', 'node_modules', 'undici', 'index.js') : '',
-      process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'node_modules', 'undici', 'index.js') : ''
-    ].filter(Boolean);
-    for (const c of candidates) {
-      try {
-        ({ setGlobalDispatcher, ProxyAgent } = await import(pathToFileURL(c).href));
-        if (setGlobalDispatcher && ProxyAgent) break;
-      } catch {}
-    }
+  } catch (cause) {
+    throw new Error('Proxy mode requires the project dependency "undici". Run `npm ci` from the repository root.', { cause });
   }
 
   if (!setGlobalDispatcher || !ProxyAgent) {
-    throw new Error('ProxyAgent unavailable');
+    throw new Error('Installed undici does not provide ProxyAgent; reinstall project dependencies with `npm ci`.');
   }
 
   setGlobalDispatcher(new ProxyAgent(proxyUrl));

@@ -243,4 +243,4 @@ reconcile 全程只读，输出 entryTerminal、pendingEntries、matchingPositio
 
 只读请求可重试；写请求不自动重发。仅收到明确 -1021 拒绝时校时后重发一次，超时、连接中断和可能已执行的服务端故障先核对历史/订单。签名使用 HMAC SHA256、服务器时差和 recvWindow，凭据值永不输出。
 
-扫描、评估、历史、reconcile、dry-run 不产生资金写请求。运行状态通过 stdout 交付，不自动建台账；既有显式日志按原开关管理。一次性输入与验证脚本放 tmp/，使用后清理，不重建 tests/。
+扫描、评估、历史、reconcile、dry-run 不产生资金写请求。运行状态通过 stdout 交付，不自动建台账；既有显式日志按原开关管理。仓库的持久离线回归套件通过 `npm test` 运行，测试在 `tests/` 与自研 skill 脚本目录维护，使用伪造 fetch 和 fixture。一次性输入与验证脚本放 `tmp/`，使用后清理，不要把临时探针留在源码目录。
