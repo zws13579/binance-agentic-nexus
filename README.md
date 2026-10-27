@@ -1,5 +1,7 @@
 # Binance Agentic Nexus
 
+[简体中文](README.zh-CN.md)
+
 Binance Agentic Nexus (BAN) combines public market research, authenticated CEX account workflows, optional Binance Web3 skills, and custom prediction-market and Square workflows. It uses Node.js 24, keeps its own JavaScript in CommonJS `.js` and ESM `.mjs` files, and runs its local regression suite without credentials or live network requests.
 
 ## Start locally
