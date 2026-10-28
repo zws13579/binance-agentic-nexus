@@ -55,4 +55,4 @@ This command sends a public GET request to Binance production. Account reads req
 
 ## License scope
 
-The root MIT license covers original project-owned code. It does not grant a license to third-party skills, submodules, copied history, or other assets with separate or unresolved terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [release checklist](docs/release-checklist.md) before redistribution.
+The root MIT license covers original project-owned code. It does not grant a license to third-party skills, submodules, or other assets with separate or unresolved terms. The independent root snapshot option excludes earlier root commits but does not resolve rights for content in the current tree or its submodules. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), the [source distribution guide](docs/source-distribution.md), and the [release checklist](docs/release-checklist.md) before redistribution.

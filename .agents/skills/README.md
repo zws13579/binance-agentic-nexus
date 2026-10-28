@@ -2,6 +2,8 @@
 
 本项目采用 **「官方 Git Submodule + 本地 Custom 深度解耦」** 的现代化技能治理架构：
 
+发布候选可采用独立根快照，仅保留当前项目树与 submodule gitlink 指针，不包含原根仓库的祖先提交。该方式不代表上游技能许可已厘清；分发边界见[源代码分发说明](../../docs/source-distribution.md)与[第三方声明](../../THIRD_PARTY_NOTICES.md)。
+
 ```text
 .agents/skills/
 ├── binance-skills-hub/                # 【Git Submodule: 币安官方开源技能中心】

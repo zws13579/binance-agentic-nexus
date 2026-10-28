@@ -55,4 +55,4 @@ BINANCE_API_ENV=prod node scripts/binance_unified.js ticker BTCUSDT
 
 ## 许可证范围
 
-根目录的 MIT 许可证仅适用于项目自有的原创代码。该许可证不涵盖第三方技能、子模块、复制的历史内容，或其他许可条款独立存在或尚未厘清的资源。再分发前，请参阅 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和[发布检查清单](docs/release-checklist.md)。
+根目录的 MIT 许可证仅适用于项目自有的原创代码。该许可证不涵盖第三方技能、子模块或其他许可条款独立存在或尚未厘清的资源。独立根快照方案会排除更早的根仓库提交，但不会厘清当前树或子模块中内容的权利状态。再分发前，请参阅 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、[源代码分发说明](docs/source-distribution.md)和[发布检查清单](docs/release-checklist.md)。

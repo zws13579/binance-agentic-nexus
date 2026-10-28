@@ -18,4 +18,6 @@ These entries record the checked submodule pins and license declarations found i
 
 ## Scope and history
 
-The root [`LICENSE`](LICENSE) applies to original project-owned code only. It does not relicense submodules, third-party content, or prior repository history. The initial repository history included vendored skill content before the move to submodules; review that history and resolve provenance and redistribution scope before publishing a source archive or history rewrite. Track this open item in [`docs/release-checklist.md`](docs/release-checklist.md).
+The root [`LICENSE`](LICENSE) applies to original project-owned code only. It does not relicense submodules or third-party content. The root history records the initial vendored skill tree (`14c1b76c224f7204a61dc632906465c38434618c`), its move into an `official` directory (`c48812b0c2a2381cb720c6fb3dce0f597669b2ff`), and the later replacement of tracked Binance skill files with a submodule gitlink (`12b540fabad52c1df69bb55a9ab2950637010de2`). A gitlink records a commit pointer; it is not a license grant.
+
+The independent root snapshot described in [`docs/source-distribution.md`](docs/source-distribution.md) excludes earlier root commits, but it does not resolve the provenance or redistribution terms of third-party content still present in the current tree or its submodules. Keep this review open before distributing that content; see [`docs/release-checklist.md`](docs/release-checklist.md).
