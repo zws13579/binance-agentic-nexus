@@ -21,6 +21,8 @@
 | redeem-earn、earn-redemptions | Simple Earn 活期赎回及历史 |
 | transfer-to-futures、transfer-from-futures、transfer-history | 现货与 USDⓈ-M 合约账户划转及历史 |
 
+统一 CLI 的 `--approved` / `--dry-run` 互斥门禁仅覆盖 `open-tpsl`、`redeem-earn`、`transfer-to-futures` 和 `transfer-from-futures`。前者提交写请求，后者预览；两者都不构成用户授权。`close-position`、`set-tpsl`、`cancel-order`、`cancel-all`、`cancel-algo`、`cancel-all-algos`、`leverage`、`margin-type` 及 `position-mode <true|false>` 的写入形式没有这组统一门禁。每个写操作都必须在对应的明确用户授权范围内执行，不能仅凭 CLI 未拒绝或模型建议推定已获授权。
+
 ```bash
 # 账户概览、现货行情和成交量榜
 node scripts/binance_unified.js status
@@ -40,7 +42,7 @@ node scripts/binance_unified.js trades <symbol> [limit]
 node scripts/binance_unified.js positions [symbol]
 node scripts/binance_unified.js position-mode
 
-# 以下为账户或订单写操作，须在对应用户授权范围内使用
+# 以下为账户或订单写操作，均须在对应用户授权范围内使用
 node scripts/binance_unified.js leverage <symbol> <leverage>
 node scripts/binance_unified.js margin-type <symbol> <ISOLATED|CROSSED>
 node scripts/binance_unified.js position-mode <true|false>

@@ -1,0 +1,6 @@
+# Historical example values in imported documentation; each exception is limited to one fingerprint.
+14c1b76c224f7204a61dc632906465c38434618c:.agents/skills/binance-agentic-wallet/references/market-order.md:generic-api-key:163
+14c1b76c224f7204a61dc632906465c38434618c:.agents/skills/binance-agentic-wallet/references/limit-order.md:generic-api-key:150
+14c1b76c224f7204a61dc632906465c38434618c:.agents/skills/binance-agentic-wallet/references/x402-payment.md:generic-api-key:71
+14c1b76c224f7204a61dc632906465c38434618c:.agents/skills/binance-agentic-wallet/references/x402-payment.md:generic-api-key:101
+14c1b76c224f7204a61dc632906465c38434618c:.agents/skills/fiat/references/authentication.md:curl-auth-header:87
